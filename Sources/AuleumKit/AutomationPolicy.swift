@@ -116,15 +116,18 @@ public enum AuleumAutomationPolicy {
 }
 
 public enum InputIdleMonitor {
-    public static func secondsSinceLastInput() -> TimeInterval {
-        // IOHIDSystem 只反映真实 HID 活跃时间；CGEventSource 会把 agent
-        // 合成事件也算进去，导致空闲起幕永远达不到阈值。
-        if let hidIdle = hidIdleSeconds() {
+    /// `includeSynthetic` 用于远程兼容模式：远控输入由软件注入，
+    /// IOHIDSystem 的 HIDIdleTime 不会更新，会把正在操作的远程会话误判为空闲。
+    public static func secondsSinceLastInput(
+        includeSynthetic: Bool = false
+    ) -> TimeInterval {
+        if !includeSynthetic, let hidIdle = hidIdleSeconds() {
             return hidIdle
         }
         let state = CGEventSourceStateID.combinedSessionState
         let eventTypes: [CGEventType] = [
             .keyDown,
+            .flagsChanged,
             .leftMouseDown,
             .rightMouseDown,
             .otherMouseDown,

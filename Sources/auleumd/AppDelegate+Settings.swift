@@ -57,11 +57,20 @@ extension AppDelegate {
             }
             controller.onSave = { [weak self] updated in
                 guard let self else { return }
+                let remoteSettingsChanged =
+                    updated.remoteCompatibilityEnabled
+                        != self.config.remoteCompatibilityEnabled
+                    || updated.remoteAutoDetectEnabled
+                        != self.config.remoteAutoDetectEnabled
                 self.config = updated
+                // 只有远程设置本身变化时才清除手动覆盖；改颜色之类不应
+                // 把用户刚从面板关掉的远程兼容又自动打开。
+                if remoteSettingsChanged {
+                    self.remoteModeOverride = nil
+                }
                 self.shield.hidesCursor = updated.hideCursorDuringVeil
-                self.shield.applyCursorVisibility()
                 self.presentation?.hidesCursor = updated.hideCursorDuringVeil
-                self.presentation?.applyCursorVisibility()
+                self.refreshRemoteMode()
                 self.shield.setBackgroundColor(AuleumColor(hex: updated.veilColor) ?? .black)
                 self.sentinel.preventsClamshellSleep = updated.clamshellModeEnabled
                 self.resetAutomationState()
@@ -137,6 +146,8 @@ extension AppDelegate {
                     "schedule": updated.scheduleEnabled,
                     "default_protection_minutes": updated.defaultProtectionMinutes,
                     "clamshell": updated.clamshellModeEnabled,
+                    "remote_compatibility": updated.remoteCompatibilityEnabled,
+                    "remote_auto_detect": updated.remoteAutoDetectEnabled,
                     "hotkey": HotkeyPolicy.displayString(
                         keyCode: updated.hotkeyKeyCode,
                         modifiers: CGEventFlags(rawValue: updated.hotkeyModifiers)

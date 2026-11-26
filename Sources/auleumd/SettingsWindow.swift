@@ -59,6 +59,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     let colorWell = NSColorWell()
     let hideCursorSwitch = NSSwitch()
     let passwordFallbackSwitch = NSSwitch()
+    let remoteCompatibilitySwitch = NSSwitch()
+    let remoteAutoSwitch = NSSwitch()
     let launchAtLoginSwitch = NSSwitch()
     var launchAtLoginInitial = false
     let autoUpdateCheckSwitch = NSSwitch()
@@ -240,6 +242,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     )
     let diagnosticsHotkeyValue = NSTextField(labelWithString: "")
     let diagnosticsModeValue = NSTextField(labelWithString: "")
+    let diagnosticsRemoteValue = NSTextField(labelWithString: "")
 
     var numberFields: [AuleumNumberField] {
         [

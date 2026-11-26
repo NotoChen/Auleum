@@ -75,6 +75,10 @@ public struct AuleumConfig: Codable, Equatable {
     public var automaticUpdateChecksEnabled: Bool
     /// 发现新版本后自动下载、校验并在空闲时安装。
     public var automaticUpdateInstallsEnabled: Bool
+    /// 幕帘期间放行远控工具输入并显示鼠标指针；物理键鼠仍然拦截。
+    public var remoteCompatibilityEnabled: Bool
+    /// 检测到常见远控进程时自动进入远程兼容模式。
+    public var remoteAutoDetectEnabled: Bool
 
     public init(holdToAuthSeconds: Double = 2.0,
                 doubleEscapeSeconds: Double = 0.7,
@@ -118,7 +122,9 @@ public struct AuleumConfig: Codable, Equatable {
                 sceneProfiles: [String: AuleumSceneProfile] = [:],
                 clamshellModeEnabled: Bool = false,
                 automaticUpdateChecksEnabled: Bool = true,
-                automaticUpdateInstallsEnabled: Bool = true) {
+                automaticUpdateInstallsEnabled: Bool = true,
+                remoteCompatibilityEnabled: Bool = true,
+                remoteAutoDetectEnabled: Bool = true) {
         self.holdToAuthSeconds = holdToAuthSeconds
         self.doubleEscapeSeconds = doubleEscapeSeconds
         self.safetyTimeoutSeconds = safetyTimeoutSeconds
@@ -171,6 +177,8 @@ public struct AuleumConfig: Codable, Equatable {
         self.clamshellModeEnabled = clamshellModeEnabled
         self.automaticUpdateChecksEnabled = automaticUpdateChecksEnabled
         self.automaticUpdateInstallsEnabled = automaticUpdateInstallsEnabled
+        self.remoteCompatibilityEnabled = remoteCompatibilityEnabled
+        self.remoteAutoDetectEnabled = remoteAutoDetectEnabled
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -192,6 +200,7 @@ public struct AuleumConfig: Codable, Equatable {
         case scheduleWeekdays, scheduleAutoExit
         case defaultProtectionMinutes, sceneProfiles, clamshellModeEnabled
         case automaticUpdateChecksEnabled, automaticUpdateInstallsEnabled
+        case remoteCompatibilityEnabled, remoteAutoDetectEnabled
     }
 
     private enum LegacyCodingKeys: String, CodingKey {
@@ -424,6 +433,14 @@ public struct AuleumConfig: Codable, Equatable {
         automaticUpdateInstallsEnabled = (try? c.decodeIfPresent(
             Bool.self,
             forKey: .automaticUpdateInstallsEnabled
+        )) ?? true
+        remoteCompatibilityEnabled = (try? c.decodeIfPresent(
+            Bool.self,
+            forKey: .remoteCompatibilityEnabled
+        )) ?? true
+        remoteAutoDetectEnabled = (try? c.decodeIfPresent(
+            Bool.self,
+            forKey: .remoteAutoDetectEnabled
         )) ?? true
     }
 

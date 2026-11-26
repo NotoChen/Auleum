@@ -10,6 +10,7 @@ func usage() -> Never {
       auleumctl scene <away|meeting|guest|focus> [--minutes N]
                                                使用场景预设起幕
       auleumctl off                           请求解除（双击 Esc / 快捷键 → 验证）
+      auleumctl remote on|off|auto|status     远程兼容：手动开/关/恢复自动识别
       auleumctl message <text>                更新幕帘上的动态进度消息（最多 200 字）
       auleumctl message --clear               清除动态消息，回落到场景提示
       auleumctl panic                         应急强制撤幕（不验指纹，需本地 shell）
@@ -138,6 +139,15 @@ case "scene":
     )
 case "off":
     request = ControlRequest(cmd: "off")
+case "remote":
+    let action = (args.first ?? "status").lowercased()
+    guard ["on", "off", "auto", "status"].contains(action) else {
+        FileHandle.standardError.write(
+            Data("remote 需要 on、off、auto 或 status\n".utf8)
+        )
+        exit(1)
+    }
+    request = ControlRequest(cmd: "remote", remote: action)
 case "message":
     let clear = hasFlag("--clear")
     let text = args.filter { $0 != "--clear" }.joined(separator: " ")

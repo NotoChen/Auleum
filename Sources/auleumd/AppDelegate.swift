@@ -52,6 +52,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var failureAuditTimes: [String: Date] = [:]
     var globalHotkey: GlobalHotkey?
     var sceneHotkeys: [AuleumScene: GlobalHotkey] = [:]
+    let remoteRegistry = RemoteProcessRegistry()
+    var remoteModeOverride: Bool?
+    var effectiveRemoteMode = false
     var permissionGuide: PermissionGuideController?
     var settingsWindow: SettingsWindowController?
     var onboardingWindow: OnboardingWindowController?
@@ -122,6 +125,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         inputGuard.onPhysicalInteraction = { [weak self] in
             self?.handleReturnHint()
         }
+        inputGuard.remoteProcessLookup = { [weak self] pid in
+            self?.remoteRegistry.snapshot().isRemote(pid) ?? false
+        }
+        inputGuard.deniedProcessLookup = { [weak self] pid in
+            self?.remoteRegistry.snapshot().isDenied(pid) ?? false
+        }
+        inputGuard.deviceInspector = HIDDeviceInspector()
         auth = AuthGate()
         broker = CaptureBroker()
         recorder = Recorder()
@@ -138,6 +148,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let issue = AuleumConfig.lastLoadIssue {
             audit.write("config_load_failed", ["issue": issue])
         }
+        remoteRegistry.onChange = { [weak self] _ in
+            self?.refreshRemoteMode()
+        }
+        remoteRegistry.start()
 
         let version = Bundle.main.infoDictionary?[
             "CFBundleShortVersionString"
@@ -172,6 +186,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         setupStatusItem()
+        refreshRemoteMode()
         setupSignalHandling()
         setupHealthWatchdog()
         globalHotkey = GlobalHotkey(
@@ -307,6 +322,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         coverRecoveryItem = nil
         automationTimer?.invalidate()
         automationTimer = nil
+        remoteRegistry.stop()
+        remoteRegistry.onChange = nil
         updates?.stop()
         auth?.cancel()
         authCard?.close()

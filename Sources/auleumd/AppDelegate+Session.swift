@@ -113,6 +113,8 @@ extension AppDelegate {
         )
 
         let startedAt = Date()
+        // 起幕前刷新一次，确保刚启动/刚切换的远控工具在本次会话里生效。
+        refreshRemoteMode()
         sessionStartedAt = startedAt
         veilDegraded = false
         lastVeilFailureReason = nil
@@ -189,6 +191,7 @@ extension AppDelegate {
                 return rollback("展示模式背景图无法读取：\(effectiveImagePath)")
             }
             presentation.hidesCursor = config.hideCursorDuringVeil
+            presentation.remoteMode = effectiveRemoteMode
             presentation.blocksPointerEvents = true
             guard presentation.show(
                 screens: presentationScreens,
@@ -235,6 +238,7 @@ extension AppDelegate {
         }
         if !blackScreens.isEmpty {
             shield.hidesCursor = config.hideCursorDuringVeil
+            shield.remoteMode = effectiveRemoteMode
             shield.backgroundColor = AuleumColor(hex: config.veilColor) ?? .black
             guard shield.raise(displayIDs: blackScreens.map(\.displayID)) else {
                 let error = shield.lastError ?? "无法建立输出层黑幕，幕帘未开启"
@@ -269,6 +273,8 @@ extension AppDelegate {
             "scene": scene?.rawValue ?? "",
             "protection_minutes": effectiveMinutes,
             "scene_message": profile?.message ?? "",
+            "remote_mode": effectiveRemoteMode,
+            "remote_tools": remoteToolsSummary,
         ])
         NSLog("veil.turnOn complete")
 
@@ -292,6 +298,8 @@ extension AppDelegate {
             "protection_minutes": "\(effectiveMinutes)",
             "protection_remaining": "\(protectionRemainingSeconds())",
             "hold_to_auth": "\(config.holdToAuthSeconds)s",
+            "remote_mode": effectiveRemoteMode ? "on" : "off",
+            "remote_mode_source": remoteModeSource,
         ])
     }
 
@@ -379,7 +387,14 @@ extension AppDelegate {
 
         let method: AuthMethod
         let context: LAContext
-        if let biometricsContext = auth.makeContext() {
+        // 远程控制下优先走密码：Touch ID 需要本地手指，远控端无法完成。
+        // 只有在用户显式开启密码兜底时才这样做，避免改变默认出口。
+        if effectiveRemoteMode,
+           config.allowPasswordFallback,
+           let systemContext = auth.makeSystemContext() {
+            method = .password
+            context = systemContext
+        } else if let biometricsContext = auth.makeContext() {
             method = .touchID
             context = biometricsContext
         } else if config.allowPasswordFallback,
@@ -409,12 +424,15 @@ extension AppDelegate {
         updateStatusItem()
         if presentation?.isActive == true {
             presentation.hideForAuth()
-            presentation.showReturnHint(
-                method == .touchID
-                    ? "等待 Touch ID 验证…"
-                    : "在系统面板中输入登录密码…",
-                duration: 30
-            )
+            let authHint: String
+            if method == .touchID {
+                authHint = effectiveRemoteMode && !config.allowPasswordFallback
+                    ? "远控模式下 Touch ID 无法完成；开启密码验证后可在远控端撤幕"
+                    : "等待 Touch ID 验证…"
+            } else {
+                authHint = "在系统面板中输入登录密码…"
+            }
+            presentation.showReturnHint(authHint, duration: 30)
         }
         if shield.isUp, !shield.demoteForAuth() {
             // 降层失败：回到未认证状态，不要在幕帘后面留下半个认证界面。
@@ -452,6 +470,7 @@ extension AppDelegate {
         audit.write("auth_prompt", [
             "trigger": trigger.rawValue,
             "method": method.rawValue,
+            "remote_mode": effectiveRemoteMode,
         ])
 
         let completion: (Bool, Error?) -> Void = { [weak self] ok, error in
@@ -568,6 +587,7 @@ extension AppDelegate {
             "trigger": trigger.rawValue,
             "method": AuthMethod.password.rawValue,
             "fallback": "touchid_failed",
+            "remote_mode": effectiveRemoteMode,
         ])
         auth.authenticateWithSystem(
             using: context,

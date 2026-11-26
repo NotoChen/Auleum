@@ -25,12 +25,15 @@ public struct ControlRequest: Codable {
     public var scene: String?
     /// 幕帘上的动态进度消息；空字符串表示清除。
     public var text: String?
+    /// 远程兼容模式动作：on / off / auto / status。
+    public var remote: String?
 
     public init(cmd: String, out: String? = nil, display: Int? = nil, displayID: UInt32? = nil,
                 duration: Double? = nil,
                 cursor: Bool? = nil, region: String? = nil, allDisplays: Bool? = nil,
                 fps: Int? = nil, bitrate: Int? = nil, client: String? = nil,
-                minutes: Int? = nil, scene: String? = nil, text: String? = nil) {
+                minutes: Int? = nil, scene: String? = nil, text: String? = nil,
+                remote: String? = nil) {
         self.cmd = cmd
         self.out = out
         self.display = display
@@ -45,6 +48,7 @@ public struct ControlRequest: Codable {
         self.minutes = minutes
         self.scene = scene
         self.text = text
+        self.remote = remote
     }
 }
 

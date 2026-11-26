@@ -10,6 +10,31 @@ public enum InputDisposition: Equatable {
     case cancelHold
 }
 
+/// 输入来源。区分物理设备、远控进程、普通合成输入和虚拟 HID 设备。
+/// 只有 `.physical` 会触发 Esc 手势/全局快捷键，也只有它始终被拦截。
+public enum InputOrigin: Equatable {
+    case physical
+    /// 来自已知远控工具的进程（CGEventPost，来源 PID 非 0）。
+    case remoteProcess
+    /// 其他合成输入，或 PID 0 但 stateID 不是 HID system 的事件。
+    case synthetic
+    /// PID 0、stateID 1，但底层是虚拟 HID 设备。
+    case virtualDevice
+    case deniedProcess
+    case deniedVirtualDevice
+}
+
+/// 只用于诊断的计数；帮助判断远控键鼠最终被归为哪一类。
+public struct InputGuardCounters: Equatable, Sendable {
+    public var physicalBlocked = 0
+    public var remotePassed = 0
+    public var virtualPassed = 0
+    public var virtualBlocked = 0
+    public var deniedBlocked = 0
+
+    public init() {}
+}
+
 public enum InputPolicy {
     /// CoreGraphics 没有公开的 CGEventType case，但它们会出现在 session 事件流里：
     /// 旋转/缩放手势、Dock 的 Space/Mission Control 控制流、三指滑动等。
@@ -20,37 +45,105 @@ public enum InputPolicy {
         gestureEventRawValues.contains(rawValue)
     }
 
-    /// 物理事件（来源 PID 0）一律拦；合成事件一律放行。
-    /// 手势流没有可靠的合成来源，作为物理输入的一部分全部拦掉，避免 Space 切换时
-    /// 把幕帘后面的桌面短暂露出来。
+    /// 物理事件必须同时满足 PID 0 和 HID system state；只满足其一的事件
+    /// 是合成/远程注入。`eventSourceUserData` 非 0 是软件设置的标记，
+    /// 也按合成输入处理（RustDesk 等会用它标记自己注入的输入）。
+    public static func origin(sourcePID: Int32,
+                              sourceStateID: Int64,
+                              sourceUserData: Int64 = 0,
+                              isRemoteProcess: Bool = false,
+                              isDeniedProcess: Bool = false,
+                              isVirtualDevice: Bool = false,
+                              isDeniedVirtualDevice: Bool = false) -> InputOrigin {
+        if sourcePID != 0 {
+            if isDeniedProcess { return .deniedProcess }
+            if isRemoteProcess { return .remoteProcess }
+            return .synthetic
+        }
+        guard sourceStateID == Int64(CGEventSourceStateID.hidSystemState.rawValue) else {
+            return .synthetic
+        }
+        guard sourceUserData == 0 else { return .synthetic }
+        if isVirtualDevice {
+            return isDeniedVirtualDevice ? .deniedVirtualDevice : .virtualDevice
+        }
+        return .physical
+    }
+
+    /// 物理输入一律拦；远程进程和普通合成输入放行。
+    /// 虚拟 HID 设备只有在远程兼容模式下放行，避免本机 Karabiner 之类的
+    /// 重映射设备绕过物理输入拦截。
+    /// Esc 长按/双击和撤幕快捷键允许哪些来源触发。远程模式下已知远控进程
+    /// 和虚拟 HID 也可以发起验证，最终仍要过 Touch ID 或密码。普通合成
+    /// 输入不参与，避免本机 Agent 误触认证面板。
+    public static func canTriggerExitGesture(origin: InputOrigin,
+                                             remoteMode: Bool) -> Bool {
+        switch origin {
+        case .physical:
+            return true
+        case .remoteProcess, .virtualDevice:
+            return remoteMode
+        case .synthetic, .deniedProcess, .deniedVirtualDevice:
+            return false
+        }
+    }
+
     public static func disposition(rawEventType: UInt32,
                                    keyCode: Int64?,
                                    isRepeat: Bool,
-                                   sourcePID: Int32,
+                                   origin: InputOrigin,
                                    isEnabled: Bool,
+                                   remoteMode: Bool = false,
                                    authenticationMode: Bool = false,
                                    passwordAuthentication: Bool = false) -> InputDisposition {
         guard isEnabled else { return .pass }
-        if isGesture(rawValue: rawEventType) { return .block }
+        if isGesture(rawValue: rawEventType) {
+            // 系统手势没有可靠的来源，严格模式下全部拦；远程模式下远控
+            // 用户需要双指滚动/切换 Space，放行由系统自行处理。
+            return remoteMode ? .pass : .block
+        }
         if authenticationMode {
             if passwordAuthentication {
-                // 系统密码面板需要物理键盘和鼠标；合成输入仍然拦截，
-                // 避免同用户下的 Agent 代输密码或代点确认。
-                return sourcePID == 0 ? .pass : .block
+                // 系统密码面板需要物理键盘和鼠标。远程模式下也允许已知远控
+                // 来源输入密码；普通合成输入仍然拦截，避免同用户 Agent 代输。
+                switch origin {
+                case .physical:
+                    return .pass
+                case .remoteProcess, .virtualDevice:
+                    return remoteMode ? .pass : .block
+                case .synthetic, .deniedProcess, .deniedVirtualDevice:
+                    return .block
+                }
             }
             // Touch ID 使用独立硬件，认证面板不需要键盘或鼠标输入。
-            // 幕帘仍然存在，不能让物理输入穿透到下面的应用。
-            return sourcePID == 0 ? .block : .pass
+            // 远程模式下远控输入继续放行，但不会触发 Touch ID。
+            switch origin {
+            case .physical:
+                return .block
+            case .remoteProcess, .synthetic:
+                return .pass
+            case .virtualDevice:
+                return remoteMode ? .pass : .block
+            case .deniedProcess, .deniedVirtualDevice:
+                return .block
+            }
         }
-        guard sourcePID == 0 else { return .pass }
-
-        if rawEventType == CGEventType.keyDown.rawValue, keyCode == 53, !isRepeat {
-            return .beginHold
+        switch origin {
+        case .deniedProcess, .deniedVirtualDevice:
+            return .block
+        case .remoteProcess, .synthetic:
+            return .pass
+        case .virtualDevice:
+            return remoteMode ? .pass : .block
+        case .physical:
+            if rawEventType == CGEventType.keyDown.rawValue, keyCode == 53, !isRepeat {
+                return .beginHold
+            }
+            if rawEventType == CGEventType.keyUp.rawValue, keyCode == 53 {
+                return .cancelHold
+            }
+            return .block
         }
-        if rawEventType == CGEventType.keyUp.rawValue, keyCode == 53 {
-            return .cancelHold
-        }
-        return .block
     }
 }
 
@@ -113,7 +206,8 @@ struct ReenableCircuitBreaker {
 }
 
 /// HID 级事件拦截。
-/// 规则：来源 PID 0（真实硬件）一律吞掉；合成事件一律放行；系统手势流单独拦。
+/// 规则：真实物理输入（PID 0 + HID state + 无软件标记）吞掉；合成事件放行；
+/// 已知远控进程放行；虚拟 HID 设备只在远程兼容模式下放行；系统手势流单独拦。
 /// 同时负责「长按 Esc」手势，触发 Touch ID。
 public final class InputGuard {
     public var holdToAuthSeconds: Double = 2.0
@@ -131,6 +225,12 @@ public final class InputGuard {
     public var onTapUnavailable: (() -> Void)?
     /// 幕帘期间检测到真实 HID 输入时调用。只用于低频界面提示，不参与授权。
     public var onPhysicalInteraction: (() -> Void)?
+    /// 已知远控进程查询。由 AppDelegate 接到 RemoteProcessRegistry。
+    public var remoteProcessLookup: ((Int32) -> Bool)?
+    /// 已知需要拦截的虚拟 HID/重映射进程查询。
+    public var deniedProcessLookup: ((Int32) -> Bool)?
+    /// 虚拟 HID 设备识别（私有 SPI，失败时返回 nil）。
+    public var deviceInspector: HIDDeviceInspector?
 
     /// 认证期间物理输入的放行方式。Touch ID 卡片不需要键鼠，
     /// 系统密码面板则必须收到物理键盘和鼠标。
@@ -143,6 +243,8 @@ public final class InputGuard {
     private let lock = NSLock()
     private let interactionLock = NSLock()
     private var _isEnabled = false
+    private var _remoteMode = false
+    private var inputCounters = InputGuardCounters()
     private var authenticationInputMode = AuthenticationInputMode.none
     private var tap: CFMachPort?
     private var gestureTap: CFMachPort?
@@ -161,6 +263,42 @@ public final class InputGuard {
         lock.lock()
         defer { lock.unlock() }
         return _isEnabled
+    }
+
+    public var remoteMode: Bool {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return _remoteMode
+        }
+        set {
+            setRemoteMode(newValue)
+        }
+    }
+
+    public func setRemoteMode(_ on: Bool) {
+        lock.lock()
+        let changed = _remoteMode != on
+        _remoteMode = on
+        lock.unlock()
+        if changed, on {
+            // 切换模式时丢弃正在进行的 Esc 手势，避免旧状态跨模式触发验证。
+            escDown = false
+            escapeTap.reset()
+            cancelHold()
+        }
+    }
+
+    public func counters() -> InputGuardCounters {
+        lock.lock()
+        defer { lock.unlock() }
+        return inputCounters
+    }
+
+    public func resetCounters() {
+        lock.lock()
+        inputCounters = InputGuardCounters()
+        lock.unlock()
     }
 
     public var gesturesProtected: Bool {
@@ -383,7 +521,16 @@ public final class InputGuard {
         }
 
         let enabled = isEnabled
+        let remoteMode = self.remoteMode
         let sourcePID = Int32(event.getIntegerValueField(.eventSourceUnixProcessID))
+        let sourceStateID = event.getIntegerValueField(.eventSourceStateID)
+        let sourceUserData = event.getIntegerValueField(.eventSourceUserData)
+        let origin = inputOrigin(
+            pid: sourcePID,
+            stateID: sourceStateID,
+            userData: sourceUserData,
+            event: event
+        )
         let keyCode: Int64? = (type == .keyDown || type == .keyUp)
             ? event.getIntegerValueField(.keyboardEventKeycode)
             : nil
@@ -393,11 +540,15 @@ public final class InputGuard {
         let passwordAuthentication = authInputMode == .password
         let flags = event.flags
 
-        if enabled, sourcePID == 0, !authenticationMode, keyCode != 53 {
+        if enabled, origin == .physical, !authenticationMode, keyCode != 53 {
             notifyPhysicalInteraction()
         }
 
-        if enabled, sourcePID == 0, let keyCode,
+        let canTriggerExit = enabled && InputPolicy.canTriggerExitGesture(
+            origin: origin,
+            remoteMode: remoteMode
+        )
+        if canTriggerExit, let keyCode,
            type == .keyDown || type == .keyUp {
             if authenticationMode, keyCode == 53 {
                 if type == .keyDown, !isRepeat {
@@ -408,20 +559,35 @@ public final class InputGuard {
                 return nil
             }
 
-            if !authenticationMode,
-               HotkeyPolicy.matches(
-                   eventKeyCode: keyCode,
-                   flags: flags,
-                   sourcePID: sourcePID,
-                   expectedKeyCode: exitHotkeyKeyCode,
-                   expectedModifiers: exitHotkeyModifiers
-               ) {
-                if type == .keyDown, !isRepeat {
-                    DispatchQueue.main.async { [weak self] in
-                        self?.onExitHotkey?()
-                    }
+            if !authenticationMode {
+                let hotkeyMatches: Bool
+                if origin == .physical {
+                    hotkeyMatches = HotkeyPolicy.matches(
+                        eventKeyCode: keyCode,
+                        flags: flags,
+                        sourcePID: sourcePID,
+                        sourceStateID: sourceStateID,
+                        expectedKeyCode: exitHotkeyKeyCode,
+                        expectedModifiers: exitHotkeyModifiers
+                    )
+                } else {
+                    // 远控进程和虚拟 HID 的 PID/stateID 不是本机 HID 来源，
+                    // 但远程模式下应能用同一个快捷键发起验证。
+                    hotkeyMatches = HotkeyPolicy.matchesIgnoringSource(
+                        eventKeyCode: keyCode,
+                        flags: flags,
+                        expectedKeyCode: exitHotkeyKeyCode,
+                        expectedModifiers: exitHotkeyModifiers
+                    )
                 }
-                return nil
+                if hotkeyMatches {
+                    if type == .keyDown, !isRepeat {
+                        DispatchQueue.main.async { [weak self] in
+                            self?.onExitHotkey?()
+                        }
+                    }
+                    return nil
+                }
             }
 
             if !authenticationMode, keyCode == 53, type == .keyDown, !isRepeat {
@@ -440,11 +606,13 @@ public final class InputGuard {
             rawEventType: type.rawValue,
             keyCode: keyCode,
             isRepeat: isRepeat,
-            sourcePID: sourcePID,
+            origin: origin,
             isEnabled: enabled,
+            remoteMode: remoteMode,
             authenticationMode: authenticationMode,
             passwordAuthentication: passwordAuthentication
         )
+        record(origin: origin, disposition: disposition)
 
         switch disposition {
         case .pass:
@@ -464,6 +632,68 @@ public final class InputGuard {
         }
     }
 
+    private func record(origin: InputOrigin,
+                        disposition: InputDisposition) {
+        lock.lock()
+        switch disposition {
+        case .block:
+            switch origin {
+            case .physical:
+                inputCounters.physicalBlocked += 1
+            case .virtualDevice:
+                inputCounters.virtualBlocked += 1
+            case .deniedProcess, .deniedVirtualDevice:
+                inputCounters.deniedBlocked += 1
+            case .remoteProcess, .synthetic:
+                break
+            }
+        case .pass:
+            switch origin {
+            case .remoteProcess:
+                inputCounters.remotePassed += 1
+            case .virtualDevice:
+                inputCounters.virtualPassed += 1
+            default:
+                break
+            }
+        case .beginHold, .cancelHold:
+            break
+        }
+        lock.unlock()
+    }
+
+    private func inputOrigin(pid: Int32,
+                             stateID: Int64,
+                             userData: Int64,
+                             event: CGEvent) -> InputOrigin {
+        let isRemoteProcess = pid != 0
+            && (remoteProcessLookup?(pid) ?? false)
+        let isDeniedProcess = pid != 0
+            && (deniedProcessLookup?(pid) ?? false)
+        var isVirtualDevice = false
+        var isDeniedVirtualDevice = false
+        // 只在远程模式、事件看起来像物理输入时才查设备，避免每个事件都走
+        // IORegistry；严格模式下虚拟设备也按物理输入拦，不需要细分。
+        if pid == 0,
+           stateID == Int64(CGEventSourceStateID.hidSystemState.rawValue),
+           userData == 0,
+           remoteMode,
+           let deviceInspector,
+           let identity = deviceInspector.identify(event: event) {
+            isVirtualDevice = identity.isVirtual
+            isDeniedVirtualDevice = identity.isDeniedVirtualDevice
+        }
+        return InputPolicy.origin(
+            sourcePID: pid,
+            sourceStateID: stateID,
+            sourceUserData: userData,
+            isRemoteProcess: isRemoteProcess,
+            isDeniedProcess: isDeniedProcess,
+            isVirtualDevice: isVirtualDevice,
+            isDeniedVirtualDevice: isDeniedVirtualDevice
+        )
+    }
+
     private func handleGesture(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             if !reenable(gestureTap) {
@@ -472,7 +702,8 @@ public final class InputGuard {
             return nil
         }
         guard isEnabled else { return Unmanaged.passUnretained(event) }
-        return nil
+        // 远控用户需要双指滚动/切换 Space；严格模式下仍然吞掉全部手势。
+        return remoteMode ? Unmanaged.passUnretained(event) : nil
     }
 
     private func reenable(_ target: CFMachPort?) -> Bool {

@@ -62,6 +62,9 @@ extension AppDelegate {
                 },
                 installUpdate: { [weak self] in
                     self?.installAvailableUpdate()
+                },
+                toggleRemoteMode: { [weak self] in
+                    self?.toggleRemoteModeFromDashboard()
                 }
             )
         )
@@ -88,6 +91,9 @@ extension AppDelegate {
                 tooltip = "Auleum：正在录制"
             } else {
                 tooltip = "Auleum：待命"
+            }
+            if self.effectiveRemoteMode {
+                tooltip += " · 远程兼容"
             }
             if let update = self.updates?.state {
                 switch update.phase {
@@ -251,8 +257,18 @@ extension AppDelegate {
             hasAccessibility: Permissions.hasAccessibility(),
             hasScreenRecording: Permissions.hasScreenRecording(),
             version: version,
-            update: updates.state
+            update: updates.state,
+            remoteMode: effectiveRemoteMode,
+            remoteModeSource: remoteModeSource,
+            remoteTools: remoteRegistry.snapshot().tools
+                .map(\.displayName)
+                .sorted(),
+            remoteCompatibilityEnabled: config.remoteCompatibilityEnabled
         )
+    }
+
+    func toggleRemoteModeFromDashboard() {
+        toggleRemoteModeOverride()
     }
 
     func dashboardPresentationLabel() -> String {

@@ -8,6 +8,11 @@ extension SettingsWindowController {
         colorWell.color = nsColor(from: config.veilColor)
         hideCursorSwitch.state = config.hideCursorDuringVeil ? .on : .off
         passwordFallbackSwitch.state = config.allowPasswordFallback ? .on : .off
+        remoteCompatibilitySwitch.state = config.remoteCompatibilityEnabled
+            ? .on
+            : .off
+        remoteAutoSwitch.state = config.remoteAutoDetectEnabled ? .on : .off
+        updateRemoteControls()
         launchAtLoginInitial = LaunchAgent.status().installed
         launchAtLoginSwitch.state = launchAtLoginInitial ? .on : .off
         autoUpdateCheckSwitch.state = config.automaticUpdateChecksEnabled
@@ -80,6 +85,9 @@ extension SettingsWindowController {
         diagnosticsModeValue.stringValue = config.presentationModeEnabled
             ? "展示模式 · \(clockStyle.displayName)"
             : "输出层 gamma"
+        diagnosticsRemoteValue.stringValue = config.remoteCompatibilityEnabled
+            ? (config.remoteAutoDetectEnabled ? "自动识别" : "手动")
+            : "关闭"
         refreshPresentationPreview()
         updateAutomationControls()
         updatePresentationControls()
@@ -122,6 +130,17 @@ extension SettingsWindowController {
         saveButton.isEnabled = dirty && !invalidInput
         cancelButton.setTitle(dirty ? "取消" : "关闭")
         cancelButton.toolTip = dirty ? "放弃未保存的修改" : "关闭设置"
+    }
+
+    @objc func remoteCompatibilityChanged() {
+        updateRemoteControls()
+        updateDirtyState()
+    }
+
+    func updateRemoteControls() {
+        let enabled = remoteCompatibilitySwitch.state == .on
+        remoteAutoSwitch.isEnabled = enabled
+        remoteAutoSwitch.alphaValue = enabled ? 1 : 0.45
     }
 
     func startKeyboardMonitor() {
@@ -182,6 +201,9 @@ extension SettingsWindowController {
         updated.veilColor = veilColorHex
         updated.hideCursorDuringVeil = hideCursorSwitch.state == .on
         updated.allowPasswordFallback = passwordFallbackSwitch.state == .on
+        updated.remoteCompatibilityEnabled =
+            remoteCompatibilitySwitch.state == .on
+        updated.remoteAutoDetectEnabled = remoteAutoSwitch.state == .on
         updated.clamshellModeEnabled = clamshellSwitch.state == .on
         updated.automaticUpdateChecksEnabled =
             autoUpdateCheckSwitch.state == .on

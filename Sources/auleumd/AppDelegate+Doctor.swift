@@ -36,7 +36,12 @@ extension AppDelegate {
                 hotkeyActive: self.globalHotkey?.isActive == true,
                 sceneHotkeys: self.sceneHotkeys.mapValues(\.isActive),
                 clamshellStatus: self.sentinel.clamshellStatus,
-                hasExternalDisplay: self.sentinel.hasExternalDisplay
+                hasExternalDisplay: self.sentinel.hasExternalDisplay,
+                remoteMode: self.effectiveRemoteMode,
+                remoteSource: self.remoteModeSource,
+                remoteTools: self.remoteRegistry.snapshot().toolNames,
+                remoteProcessCount: self.remoteRegistry.snapshot().remotePIDs.count,
+                inputCounters: self.inputGuard.counters()
             )
         }
         let config = settings.config
@@ -105,6 +110,32 @@ extension AppDelegate {
         )
         lines.append("快捷键：\(hotkeyText)（全局监听）")
         lines.append("合盖模式：\(settings.clamshellStatus)")
+        let remoteEnabledText = config.remoteCompatibilityEnabled ? "开启" : "关闭"
+        let remoteAutoText = config.remoteAutoDetectEnabled ? "开启" : "关闭"
+        let remoteActiveText = settings.remoteMode ? "已启用" : "未启用"
+        let remoteLine = "远程兼容：\(remoteEnabledText)"
+            + " · 自动识别\(remoteAutoText)"
+            + " · 当前\(remoteActiveText)"
+            + "（\(settings.remoteSource)）"
+        lines.append(remoteLine)
+        let remoteToolsText = settings.remoteTools.isEmpty
+            ? "未检测到"
+            : settings.remoteTools
+        let remoteSPIText = HIDDeviceInspector.isSPIAvailable ? "可用" : "不可用"
+        let remoteToolsLine = "远控工具：\(remoteToolsText)"
+            + " · 进程 \(settings.remoteProcessCount) 个"
+            + " · 虚拟 HID 识别 \(remoteSPIText)"
+        lines.append(remoteToolsLine)
+        if settings.remoteMode, !config.allowPasswordFallback {
+            lines.append("提示：远程兼容已开启但密码兜底关闭，远控端无法完成 Touch ID 验证。")
+        }
+        let inputCounters = settings.inputCounters
+        let inputLine = "输入计数：物理拦截 \(inputCounters.physicalBlocked)"
+            + " · 远控放行 \(inputCounters.remotePassed)"
+            + " · 虚拟放行 \(inputCounters.virtualPassed)"
+            + " · 虚拟拦截 \(inputCounters.virtualBlocked)"
+            + " · 名单拦截 \(inputCounters.deniedBlocked)"
+        lines.append(inputLine)
 
         let agent = LaunchAgent.status()
         lines.append("开机自启：\(agent.installed ? "已安装" : "未安装")\(agent.installed ? (agent.loaded ? "、已加载" : "、未加载") : "")")
@@ -173,6 +204,18 @@ extension AppDelegate {
             "shield_up": mainState.shieldUp ? "yes" : "no",
             "presentation_active": mainState.presentationActive ? "yes" : "no",
             "clamshell": config.clamshellModeEnabled ? "on" : "off",
+            "remote_mode": settings.remoteMode ? "on" : "off",
+            "remote_mode_source": settings.remoteSource,
+            "remote_compatibility": config.remoteCompatibilityEnabled ? "on" : "off",
+            "remote_auto_detect": config.remoteAutoDetectEnabled ? "on" : "off",
+            "remote_tools": settings.remoteTools,
+            "remote_processes": "\(settings.remoteProcessCount)",
+            "remote_hid_spi": HIDDeviceInspector.isSPIAvailable ? "ok" : "unavailable",
+            "input_physical_blocked": "\(settings.inputCounters.physicalBlocked)",
+            "input_remote_passed": "\(settings.inputCounters.remotePassed)",
+            "input_virtual_passed": "\(settings.inputCounters.virtualPassed)",
+            "input_virtual_blocked": "\(settings.inputCounters.virtualBlocked)",
+            "input_denied_blocked": "\(settings.inputCounters.deniedBlocked)",
             "overall": "pending",
         ]
         let checksOK = ax

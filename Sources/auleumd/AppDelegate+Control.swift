@@ -43,6 +43,45 @@ extension AppDelegate {
                 self.requestExit(trigger: .control)
                 return ControlResponse(ok: true, message: "已请求验证，验证通过后撤幕")
             }
+        case "remote":
+            return onMain {
+                let action = (request.remote ?? "status").lowercased()
+                if action == "status" {
+                    let enabled = self.effectiveRemoteMode ? "开启" : "关闭"
+                    return ControlResponse(
+                        ok: true,
+                        message: "远程兼容当前\(enabled)（\(self.remoteModeSource)）",
+                        data: self.remoteStatusData()
+                    )
+                }
+                guard action == "on" || action == "off" || action == "auto" else {
+                    return .failure("remote 需要 on、off、auto 或 status")
+                }
+                if action == "on", !self.config.remoteCompatibilityEnabled {
+                    return .failure("远程兼容已在设置中关闭；请先在设置中开启")
+                }
+                switch action {
+                case "on":
+                    self.remoteModeOverride = true
+                case "off":
+                    self.remoteModeOverride = false
+                default:
+                    self.remoteModeOverride = nil
+                }
+                self.refreshRemoteMode()
+                self.audit.write("remote_mode_command", [
+                    "action": action,
+                    "effective": self.effectiveRemoteMode,
+                    "source": self.remoteModeSource,
+                    "tools": self.remoteToolsSummary,
+                ])
+                let state = self.effectiveRemoteMode ? "开启" : "关闭"
+                return ControlResponse(
+                    ok: true,
+                    message: "远程兼容已\(state)（\(self.remoteModeSource)）",
+                    data: self.remoteStatusData()
+                )
+            }
         case "message":
             return onMain {
                 guard self.veilOn else {
@@ -114,6 +153,7 @@ extension AppDelegate {
 
     func status(caller: String? = nil, peer: ProcessPeer? = nil) -> ControlResponse {
         let recording = recorder.snapshot()
+        let inputStats = inputGuard.counters()
         let screens = ScreenInventory.current()
         let presentationIDs = screens.filter {
             effectiveDisplayRole(isMain: $0.isMain) == .presentation
@@ -158,6 +198,11 @@ extension AppDelegate {
             "input_gestures": veilOn
                 ? (inputGuard.gesturesProtected ? "protected" : "unavailable")
                 : "idle",
+            "input_physical_blocked": "\(inputStats.physicalBlocked)",
+            "input_remote_passed": "\(inputStats.remotePassed)",
+            "input_virtual_passed": "\(inputStats.virtualPassed)",
+            "input_virtual_blocked": "\(inputStats.virtualBlocked)",
+            "input_denied_blocked": "\(inputStats.deniedBlocked)",
             "caller": caller ?? "unknown",
             "caller_process": peer?.direct.name ?? "",
             "caller_parent": peer?.principal.name ?? "",
@@ -168,9 +213,26 @@ extension AppDelegate {
             "protection_minutes": "\(self.sessionProtectionMinutes)",
             "protection_remaining": "\(self.protectionRemainingSeconds())",
             "idle_auto_veil": self.config.idleAutoVeilEnabled ? "on" : "off",
-            "idle_seconds": "\(Int(InputIdleMonitor.secondsSinceLastInput()))",
+            "idle_seconds": "\(Int(InputIdleMonitor.secondsSinceLastInput(includeSynthetic: self.effectiveRemoteMode)))",
             "schedule": self.config.scheduleEnabled ? "on" : "off",
             "clamshell": self.config.clamshellModeEnabled ? "on" : "off",
+            "remote_mode": self.effectiveRemoteMode ? "on" : "off",
+            "remote_mode_source": self.remoteModeSource,
+            "remote_compatibility": self.config.remoteCompatibilityEnabled
+                ? "on"
+                : "off",
+            "remote_auto_detect": self.config.remoteAutoDetectEnabled
+                ? "on"
+                : "off",
+            "remote_tools": self.remoteRegistry.snapshot().tools
+                .map(\.rawValue)
+                .sorted()
+                .joined(separator: ","),
+            "remote_tool_names": self.remoteToolsSummary,
+            "remote_processes": "\(self.remoteRegistry.snapshot().remotePIDs.count)",
+            "remote_hid_spi": HIDDeviceInspector.isSPIAvailable
+                ? "available"
+                : "unavailable",
             "screens_asleep": self.screensAsleepWithClamshell ? "yes" : "no",
             "update_phase": self.updatePhaseName(self.updates.state.phase),
             "update_current": self.updates.currentVersion,

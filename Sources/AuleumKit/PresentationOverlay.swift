@@ -31,6 +31,12 @@ public final class PresentationOverlay {
     public var componentBackground: PresentationComponentBackground = .auto
     public var clockWidgets = PresentationClockWidgets()
     public var hidesCursor = true
+    /// 远程兼容模式：远控端需要看到指针，否则鼠标完全不可见。
+    public var remoteMode = false {
+        didSet {
+            if oldValue != remoteMode { applyCursorVisibility() }
+        }
+    }
     public var blocksPointerEvents = false
 #if DEBUG
     public var allowsScreenCapture = false
@@ -106,7 +112,7 @@ public final class PresentationOverlay {
 
     public func applyCursorVisibility() {
         guard isActive, !cursorRevealedForAuth else { return }
-        if hidesCursor {
+        if hidesCursor, !remoteMode {
             let hidden = Set(cursorHiddenDisplayIDs)
             for screen in ScreenInventory.current()
                 where !hidden.contains(screen.displayID) {

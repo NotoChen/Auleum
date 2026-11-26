@@ -48,7 +48,8 @@ flowchart LR
 
 ## 主要能力
 
-- **物理输入拦截**：按事件来源区分物理与合成输入；物理键鼠、滚轮、触控板和系统手势被吞掉，Agent 的合成点击和键盘正常送达。
+- **物理输入拦截**：按事件来源区分物理、远控和合成输入；物理键鼠、滚轮、触控板和系统手势被吞掉，Agent 的合成点击和键盘正常送达。
+- **远程控制兼容**：默认开启。识别 UU 远程、向日葵、AnyDesk、RustDesk、ToDesk、TeamViewer、屏幕共享等进程；幕帘期间放行远控键鼠、显示鼠标指针、放行系统手势，并允许远控端用双击 Esc 或撤幕快捷键发起验证，本机物理键鼠仍然拦截。可自动识别，也可用状态面板或 `auleumctl remote on|off|auto` 手动切换。开启密码兜底时，远控下撤幕优先使用系统密码面板，因为 Touch ID 需要本地手指。
 - **默认 Touch ID 出口**：双击 <kbd>Esc</kbd>、长按 <kbd>Esc</kbd>、全局快捷键、`auleumctl off` 都进入同一个验证流程；验证界面是幕帘内的自定义 Touch ID 卡片（指纹比对仍由系统完成），不会弹系统认证面板；认证失败或取消时回到幕帘。密码兜底默认关闭，开启后 Touch ID 不可用、验证失败或锁定时改用系统密码面板，期间物理键鼠放行给面板，合成输入仍被拦截。Touch ID 不可用、权限撤销、tap 失效、覆盖失败或睡眠时都保持幕帘；锁屏时让系统登录界面可见、解锁后立即补涂，幕帘状态不撤销。`panic` 和结束进程是仅有的应急出口，不走认证。
 - **展示模式**：居中卡片、右下角、极简、自由四种版式；自由版式可在设置预览里直接拖动时钟、提示和返回时间。组件底板可透明，文字颜色随幕布颜色自适应。数字、表盘、日历三种时钟；秒、农历、计时组件可单独关闭；支持自定义背景图、焦点、缩放、暗化和全屏试看。Agent 可用 `auleumctl message` 更新幕帘上的进度消息，单行最多 200 字，不撤幕就能让人看到当前进展。
 - **场景**：离开、会议、访客、专注四套完整预设，可独立配置时长、背景、时钟、提示文字和屏幕角色。
@@ -131,7 +132,9 @@ auleumctl message --clear           # 清除动态消息，回落到场景提示
 auleumctl off                       # 请求解除（Touch ID / 密码兜底）
 auleumctl panic                     # 应急强制撤幕，不验指纹
 auleumctl status                    # JSON 状态
-auleumctl doctor                    # 权限 / 屏 / gamma / tap / 快捷键 / Touch ID / 密码兜底 / 审计链
+auleumctl doctor                    # 权限 / 屏 / gamma / tap / 快捷键 / Touch ID / 密码兜底 / 远程兼容 / 审计链
+auleumctl remote on|off|auto        # 远程兼容：手动开 / 手动关 / 回到自动识别
+auleumctl remote status             # 远程兼容状态、检测到的远控工具与输入计数
 
 auleumctl capture --out shot.png [--all | --display-id 1 | --region x,y,w,h] [--cursor]
 auleumctl record start --out rec.mp4 [--fps 30] [--bitrate 8000000]
@@ -243,7 +246,7 @@ auleumctl message --clear
 
 | 页面 | 内容 |
 |---|---|
-| 幕帘 | Esc 手势、快捷键、幕帘颜色、鼠标指针、密码验证兜底、开机自启、合盖继续运行 |
+| 幕帘 | Esc 手势、快捷键、幕帘颜色、鼠标指针、密码验证兜底、远程控制兼容、自动识别远控、开机自启、合盖继续运行 |
 | 自动化 | 空闲起幕、每日定时、时段结束验证、默认保护时长 |
 | 场景 | 四个场景的时长、展示方式、背景、时钟、提示和屏幕角色 |
 | 展示模式 | 版式（含自由拖动和组件底板）、背景、时钟样式、组件、屏幕角色、全屏试看 |
@@ -283,6 +286,8 @@ auleumctl message --clear
 | `presentationImagePath` | `""` | 自定义背景图路径 |
 | `veilColor` | `"#000000"` | gamma 幕帘颜色 |
 | `allowPasswordFallback` | `false` | Touch ID 不可用或验证失败时允许系统密码验证 |
+| `remoteCompatibilityEnabled` | `true` | 幕帘期间放行远控输入、显示指针并放行系统手势 |
+| `remoteAutoDetectEnabled` | `true` | 检测到常见远控进程时自动进入远程兼容模式 |
 | `automaticUpdateChecksEnabled` | `true` | 启动后和每 6 小时检查 GitHub Releases |
 | `automaticUpdateInstallsEnabled` | `true` | 自动下载、校验并安装新版本 |
 | `holdToAuthSeconds` | `2` | 长按 Esc 的认证阈值 |
@@ -300,8 +305,9 @@ auleumctl message --clear
 - **gamma 幕帘不能显示文字或图片**：需要时钟和提示时使用展示模式。
 - **展示模式不是更强的幕帘**：窗口层级和输入拦截相同，但采集保证更弱；HDMI、采集卡会看到背景和时钟。
 - **挡不住物理动作**：电源键、长按强关、USB 设备接入不在事件流里。合盖运行只申请防休眠断言，真实行为由 macOS 电源策略决定。
-- **合成事件需要来源 PID**：来源 PID 为 0 的事件按物理输入处理；Agent 应通过 `CGEventSource` 投递点击和键盘。
-- **手势按物理输入处理**：合成触控板手势也会被拦截；Agent 应使用点击、键盘和截图。
+- **合成事件需要来源 PID**：来源 PID 为 0 且 HID stateID 为 1 的事件按物理输入处理；带来源 PID、非 HID state 或带软件 userData 标记的事件按合成/远控输入处理。Agent 应通过 `CGEventSource` 投递点击和键盘。
+- **远程兼容不是安全边界**：进程名单和 HID 设备识别用于兼容，不用于防伪；同一用户下的程序可以改名或直接投递合成事件。无法取得设备身份的虚拟 HID 输入在远程模式下仍按物理输入拦截，若某个远控工具的键盘仍不可用，`doctor` 的 `remote_hid_spi` 和进程列表可用于排查。
+- **手势按模式处理**：严格模式下合成触控板手势也会被拦截；远程兼容模式下系统手势放行，Agent 仍应使用点击、键盘和截图。
 - **自动化不会自动解锁**：空闲、定时和倒计时只负责起幕或发起 Touch ID。
 - **失败不会自动撤幕**：tap 失效或权限撤销时画面仍保持遮挡，但物理输入可能已经不被拦截；这是严格保持幕帘的代价，应急出口是 `panic` 或结束进程。
 - **锁屏会暂时让出画面**：锁屏/切换用户时覆盖层会先移除，让系统登录界面可见；幕帘状态保持为开启，解锁后重建。这不是 `veil_off`，桌面不会在锁屏期间露出。
@@ -327,7 +333,7 @@ auleumctl message --clear
 ./Scripts/test.sh
 ```
 
-只依赖 Command Line Tools；脚本会处理 Swift Testing 宏插件路径，用 Xcode 工具链时也可以直接 `swift test`。最近一次源码测试：**89 tests / 16 suites**。仓库不包含 CI；发布和产物校验走本地脚本。
+只依赖 Command Line Tools；脚本会处理 Swift Testing 宏插件路径，用 Xcode 工具链时也可以直接 `swift test`。最近一次源码测试：**100 tests / 17 suites**。仓库不包含 CI；发布和产物校验走本地脚本。
 
 测试机为 Apple M1、双屏、macOS 27.2；代码目标 macOS 14+，但 macOS 14/15 的 gamma、权限面板和 ScreenCaptureKit 行为仍需单独实测。历史验证记录见 [docs/verification.md](docs/verification.md)。
 

@@ -18,6 +18,10 @@ struct DashboardSnapshot {
     var hasScreenRecording: Bool
     var version: String
     var update = UpdateState()
+    var remoteMode = false
+    var remoteModeSource = "disabled"
+    var remoteTools: [String] = []
+    var remoteCompatibilityEnabled = false
 
     var permissionsReady: Bool {
         hasAccessibility && hasScreenRecording
@@ -34,6 +38,7 @@ struct DashboardActions {
     let quit: () -> Void
     var checkForUpdates: () -> Void = {}
     var installUpdate: () -> Void = {}
+    var toggleRemoteMode: () -> Void = {}
 }
 
 final class StatusPopoverController: NSObject, NSPopoverDelegate {
@@ -87,6 +92,10 @@ final class StatusPopoverController: NSObject, NSPopoverDelegate {
             installUpdate: { [weak self] in
                 guard let self else { return }
                 self.perform(self.actions.installUpdate)
+            },
+            toggleRemoteMode: { [weak self] in
+                guard let self else { return }
+                self.perform(self.actions.toggleRemoteMode)
             }
         )
         dashboard = DashboardViewController(provider: provider, actions: wrapped)
@@ -150,6 +159,7 @@ final class DashboardViewController: NSViewController {
     private let hero = DashboardHeroView()
     private let degradedCard = DashboardDegradedCard()
     private let updateCard = DashboardUpdateCard()
+    private let remoteCard = DashboardRemoteCard()
     private let quickPanel = DashboardQuickPanel()
     private let permissionCard = DashboardPermissionCard()
     private let versionLabel = NSTextField(labelWithString: "")
@@ -226,6 +236,9 @@ final class DashboardViewController: NSViewController {
         updateCard.onInstall = { [weak self] in
             self?.actions.installUpdate()
         }
+        remoteCard.onToggle = { [weak self] in
+            self?.actions.toggleRemoteMode()
+        }
         updateButton.target = self
         updateButton.action = #selector(checkUpdatesClicked)
 
@@ -240,6 +253,7 @@ final class DashboardViewController: NSViewController {
             hero,
             degradedCard,
             updateCard,
+            remoteCard,
             quickPanel,
             permissionCard,
         ]
@@ -346,9 +360,10 @@ final class DashboardViewController: NSViewController {
         let missingPermissions: CGFloat = snapshot.permissionsReady ? 0 : 84
         let degraded: CGFloat = snapshot.degradedReason == nil ? 0 : 68
         let update: CGFloat = updateCard.isHidden ? 0 : 84
+        let remote: CGFloat = remoteCard.isHidden ? 0 : 62
         return NSSize(
             width: 420,
-            height: base + missingPermissions + degraded + update
+            height: base + missingPermissions + degraded + update + remote
         )
     }
 
@@ -361,6 +376,8 @@ final class DashboardViewController: NSViewController {
         degradedCard.isHidden = snapshot.degradedReason == nil
         updateCard.update(state: snapshot.update)
         updateCard.isHidden = updateCard.isHiddenState
+        remoteCard.update(snapshot: snapshot)
+        remoteCard.isHidden = !snapshot.remoteCompatibilityEnabled
         updateButton.isEnabled = snapshot.update.phase != .checking
             && snapshot.update.phase != .downloading
             && snapshot.update.phase != .installing
@@ -806,6 +823,107 @@ private final class DashboardUpdateCard: NSView {
         } else {
             onCheck?()
         }
+    }
+}
+
+private final class DashboardRemoteCard: NSView {
+    var onToggle: (() -> Void)?
+
+    private let icon = AuleumIconTile(
+        symbol: "display.2",
+        color: AuleumTheme.secondaryInk,
+        size: 30
+    )
+    private let title = AuleumTheme.label(
+        "远程兼容",
+        size: 11,
+        weight: .semibold
+    )
+    private let detail = AuleumTheme.label(
+        "",
+        size: 9.5,
+        color: AuleumTheme.secondaryInk
+    )
+    private let actionButton = AuleumButton(
+        title: "开启",
+        style: .secondary,
+        target: nil,
+        action: nil
+    )
+    private var active = false
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.cornerRadius = 13
+        detail.lineBreakMode = .byTruncatingTail
+        let textStack = AuleumTheme.stack([title, detail], spacing: 2)
+        let row = AuleumTheme.stack(
+            [icon, textStack, actionButton],
+            orientation: .horizontal,
+            spacing: 12,
+            alignment: .centerY
+        )
+        textStack.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        actionButton.setContentHuggingPriority(.required, for: .horizontal)
+        actionButton.target = self
+        actionButton.action = #selector(toggleClicked)
+        addSubview(row)
+        row.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
+            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
+            row.topAnchor.constraint(equalTo: topAnchor, constant: 12),
+            row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
+        ])
+        updateAppearance()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateAppearance()
+    }
+
+    func update(snapshot: DashboardSnapshot) {
+        active = snapshot.remoteMode
+        title.stringValue = active ? "远程兼容已开启" : "远程兼容已关闭"
+        let tools = snapshot.remoteTools.isEmpty
+            ? ""
+            : " · \(snapshot.remoteTools.joined(separator: "、"))"
+        switch snapshot.remoteModeSource {
+        case "manual-on":
+            detail.stringValue = "手动开启\(tools) · 物理键鼠仍拦截"
+        case "manual-off":
+            detail.stringValue = "手动关闭 · 物理键鼠仍拦截"
+        case "auto":
+            detail.stringValue = "自动识别\(tools) · 物理键鼠仍拦截"
+        case "auto-idle":
+            detail.stringValue = "未检测到远控工具 · 物理键鼠仍拦截"
+        case "auto-off":
+            detail.stringValue = "自动识别已关闭 · 可手动开启"
+        default:
+            detail.stringValue = "远程兼容已关闭"
+        }
+        actionButton.setTitle(active ? "关闭" : "开启")
+        icon.setColor(active ? AuleumTheme.success : AuleumTheme.secondaryInk)
+        setAccessibilityLabel("\(title.stringValue)：\(detail.stringValue)")
+        updateAppearance()
+    }
+
+    private func updateAppearance() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            let tint = active ? AuleumTheme.success : AuleumTheme.tertiaryInk
+            layer?.backgroundColor = tint.withAlphaComponent(0.07).cgColor
+            layer?.borderWidth = 0.7
+            layer?.borderColor = tint.withAlphaComponent(0.16).cgColor
+        }
+    }
+
+    @objc private func toggleClicked() {
+        onToggle?()
     }
 }
 

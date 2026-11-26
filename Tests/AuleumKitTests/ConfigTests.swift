@@ -620,4 +620,31 @@ struct ConfigTests {
         #expect(config.automaticUpdateChecksEnabled == false)
         #expect(config.automaticUpdateInstallsEnabled)
     }
+
+    @Test("Remote compatibility defaults on and round-trips")
+    func remoteCompatibility() throws {
+        let defaults = try JSONDecoder().decode(
+            AuleumConfig.self,
+            from: Data("{}".utf8)
+        )
+        #expect(defaults.remoteCompatibilityEnabled)
+        #expect(defaults.remoteAutoDetectEnabled)
+
+        var config = defaults
+        config.remoteCompatibilityEnabled = false
+        config.remoteAutoDetectEnabled = false
+        let decoded = try JSONDecoder().decode(
+            AuleumConfig.self,
+            from: JSONEncoder().encode(config)
+        )
+        #expect(!decoded.remoteCompatibilityEnabled)
+        #expect(!decoded.remoteAutoDetectEnabled)
+
+        let partial = try JSONDecoder().decode(
+            AuleumConfig.self,
+            from: Data(#"{"remoteCompatibilityEnabled":false}"#.utf8)
+        )
+        #expect(!partial.remoteCompatibilityEnabled)
+        #expect(partial.remoteAutoDetectEnabled)
+    }
 }

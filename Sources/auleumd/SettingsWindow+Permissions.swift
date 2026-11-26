@@ -54,6 +54,10 @@ extension SettingsWindowController {
                 title: "默认幕帘",
                 valueView: diagnosticsModeValue
             ),
+            diagnosticRow(
+                title: "远程兼容",
+                valueView: diagnosticsRemoteValue
+            ),
         ])
 
         let copyButton = AuleumButton(
@@ -154,6 +158,8 @@ extension SettingsWindowController {
             "veil_color: \(veilColorHex)",
             "hotkey: \(hotkeyDisplay)",
             "hide_cursor: \(hideCursorSwitch.state == .on)",
+            "remote_compatibility: \(remoteCompatibilitySwitch.state == .on)",
+            "remote_auto_detect: \(remoteAutoSwitch.state == .on)",
             "clamshell: \(clamshellSwitch.state == .on)",
             "idle_auto: \(idleSwitch.state == .on)",
             "idle_minutes: \(Int(idleMinutesField.value.rounded()))",

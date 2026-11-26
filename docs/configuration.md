@@ -53,7 +53,9 @@
   "sceneProfiles": {},
   "clamshellModeEnabled": false,
   "automaticUpdateChecksEnabled": true,
-  "automaticUpdateInstallsEnabled": true
+  "automaticUpdateInstallsEnabled": true,
+  "remoteCompatibilityEnabled": true,
+  "remoteAutoDetectEnabled": true
 }
 ```
 
@@ -64,13 +66,45 @@
 | `holdToAuthSeconds` | 1–5 秒 | 长按 Esc 多久后发起 Touch ID。默认 2。 |
 | `doubleEscapeSeconds` | 0.3–1.5 秒 | 双击 Esc 的判定窗口。默认 0.7。 |
 | `safetyTimeoutSeconds` | 0–86400 秒 | 开发兜底：到时发起 Touch ID，不直接撤幕。`0` 关闭，默认关闭。 |
-| `hideCursorDuringVeil` | 布尔 | 幕帘期间隐藏鼠标指针，不影响 Agent 截图。密码面板显示期间会临时显示指针。 |
+| `hideCursorDuringVeil` | 布尔 | 幕帘期间隐藏鼠标指针，不影响 Agent 截图。密码面板显示期间和远程兼容模式下会强制显示指针。 |
 | `allowPasswordFallback` | 布尔 | Touch ID 不可用或验证失败时允许系统密码验证。默认 `false`。密码由系统的 `coreautha` 面板处理，Auleum 不接触明文；面板期间物理键鼠放行，合成输入仍被拦截。 |
 | `veilColor` | `#RRGGBB` | 展示模式未选择图片且关闭默认背景时使用；关闭展示模式时作为 gamma 输出层纯色。不含透明度。 |
 | `defaultProtectionMinutes` | 0–1440 分钟 | 普通起幕的默认倒计时；`0` 表示不限时。到点只发起验证，不自动撤幕。 |
 | `clamshellModeEnabled` | 布尔 | 请求屏幕/系统防休眠断言。真实合盖是否继续运行仍由 macOS 电源策略决定。 |
 
 gamma 幕帘不支持图片或文字：gamma 表没有空间信息，任何可见内容都会进入 framebuffer，破坏 Agent 采集透明性。
+
+## 远程兼容
+
+| 字段 | 默认值 | 说明 |
+|---|:---:|---|
+| `remoteCompatibilityEnabled` | `true` | 幕帘期间放行已知远控进程的输入、显示鼠标指针并放行系统手势；本机物理键鼠仍然拦截。 |
+| `remoteAutoDetectEnabled` | `true` | 扫描 `UURemote`、`SunloginClient`、`AnyDesk`、`RustDesk`、`ToDesk`、`TeamViewer`、`Screen Sharing`、`ARDAgent`、Chrome Remote Desktop、VNC、NoMachine、Splashtop、LogMeIn 等进程，检测到时自动进入远程兼容模式。 |
+
+远程兼容模式只改变远控输入的放行方式，不会放行物理键鼠。手动开关可用状态面板的「远程兼容」卡片或命令行：
+
+```bash
+auleumctl remote on      # 手动开启
+auleumctl remote off     # 手动关闭
+auleumctl remote auto    # 清除手动覆盖，回到自动识别
+auleumctl remote status  # 查看模式、检测到的工具和 HID SPI 状态
+```
+
+设置窗口保存后会清除手动覆盖并重新按配置计算。开启密码兜底时，远程模式下的撤幕请求优先使用系统密码面板，因为 Touch ID 需要本地手指；远程输入在密码面板期间放行，普通合成输入仍然拦截。
+
+远程模式下，已知远控来源和可识别的虚拟 HID 也可以双击 Esc 或按撤幕快捷键发起验证，验证仍必须通过 Touch ID 或密码；普通合成输入不会触发认证。若只开启 Touch ID、没有开启密码兜底，远控端无法完成验证，幕帘上的提示会说明原因。
+
+事件来源判定：
+
+- 来源 PID 非 0 且属于已知远控进程：放行。
+- 来源 PID 非 0 的其他进程：按合成输入放行（与旧行为一致）。
+- 来源 PID 0、HID stateID 为 1、没有软件 userData 标记：物理输入。严格模式拦截；远程模式仍拦截，除非底层 IOHIDEvent 能识别为虚拟 HID 设备。
+- 底层设备是虚拟 HID：严格模式拦截；远程模式放行。Karabiner 等重映射设备的虚拟 HID 在两种模式下都拦截。
+- 其他 stateID 或 userData 非 0：按合成/远控输入放行。
+
+虚拟 HID 识别使用私有 SPI `CGEventCopyIOHIDEvent` / `IOHIDEventGetSenderID`，失败时按物理输入处理。`auleumctl doctor` 的 `remote_hid_spi` 会显示 SPI 是否可用。
+
+`auleumctl status` 与 `doctor` 会给出幕帘期间的输入计数：`input_physical_blocked`、`input_remote_passed`、`input_virtual_passed`、`input_virtual_blocked`、`input_denied_blocked`。如果远控键盘仍不可用，先看 `remote_tools` 是否识别到工具、`remote_hid_spi` 是否可用，再看 `input_physical_blocked` 是否随按键增长——增长说明该远控事件被当成了物理输入。
 
 ## 快捷键
 

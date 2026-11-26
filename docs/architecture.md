@@ -5,7 +5,8 @@
 ```text
 auleumd            菜单栏常驻进程（唯一持有 TCC 权限的进程）
   Shield           gamma 输出层纯色；认证时临时恢复 gamma 并使用黑窗
-  InputGuard       HID 事件拦截（物理/合成二分）+ 双击/长按 Esc 手势
+  InputGuard       HID 事件拦截（物理/远控/合成/虚拟 HID）+ 双击/长按 Esc 手势
+  RemoteInput      远控进程扫描 + 虚拟 HID 设备识别（远程兼容模式）
   PresentationOverlay  展示模式全屏窗口
   CaptureBroker    SCScreenshotManager / SCStream
   AuthGate         Touch ID（默认出口）/ 可选系统密码兜底
@@ -20,12 +21,13 @@ auleumctl          瘦客户端，不需要任何权限
 
 ## 输入策略
 
-- 主事件 tap 挂在 `kCGHIDEventTap`：来源 PID 为 0 的事件按物理输入处理并吞掉，带来源 PID 的合成事件放行。不维护进程名单。
-- 另一个 session tap 拦截 Mission Control、Space 切换、Dock control 等系统手势，避免滑动时露出桌面。
-- 物理键盘、鼠标、滚轮、平板事件在幕帘期间全部被拦截；合成点击和键盘仍可送达应用，Agent 的操作路径不受影响。
-- 退出入口做在事件 tap 内部，因为幕帘期间菜单点不到。双击 Esc、长按 Esc、全局快捷键、`auleumctl off` 都进入同一个验证流程。
+- 主事件 tap 挂在 `kCGHIDEventTap`，按来源把事件分成 `.physical`、`.remoteProcess`、`.synthetic`、`.virtualDevice` 和两类 `.denied`。物理输入要求来源 PID 0、HID stateID 1 且没有软件 userData 标记；只满足部分条件的事件按合成/远控输入处理。
+- 远程兼容模式维护一份常见远控进程表（通过 `proc_listallpids` + `proc_pidpath` 每 3 秒刷新），并可通过 `CGEventCopyIOHIDEvent` → `IOHIDEventGetSenderID` → IORegistry 识别虚拟 HID。已知远控进程直接放行；虚拟 HID 只在远程兼容模式下放行；Karabiner 等重映射虚拟设备始终拦截。识别失败时按物理输入处理。
+- 另一个 session tap 拦截 Mission Control、Space 切换、Dock control 等系统手势，避免滑动时露出桌面；远程兼容模式下放行这些手势给远控端使用。
+- 物理键盘、鼠标、滚轮、平板事件在幕帘期间全部被拦截；合成点击和键盘仍可送达应用，Agent 的操作路径不受影响。远程兼容模式不改变物理输入拦截，只改变远控来源和指针可见性。
+- 退出入口做在事件 tap 内部，因为幕帘期间菜单点不到。双击 Esc、长按 Esc、全局快捷键、`auleumctl off` 都进入同一个验证流程。远程兼容模式下，已知远控来源和可识别的虚拟 HID 也能用双击 Esc 或撤幕快捷键发起验证；普通合成输入不会触发，且验证仍必须通过 Touch ID 或密码。
 - 默认认证界面是幕帘内的自定义 Touch ID 卡片：Apple 的 `LAAuthenticationView` 把指纹图标和验证状态画在卡片窗口（层级 102），不再弹系统认证面板；覆盖层降到 Dock（20）和菜单栏（24）之上（101），全屏遮挡仍在。认证失败或取消后回到幕帘。
-- 可选密码兜底默认关闭。开启后，Touch ID 不可用（无硬件、被锁定或暂时不可用）或验证失败时改用 `LAContext.evaluatePolicy(.deviceOwnerAuthentication)` 的系统密码面板；用户按 Esc 取消不会触发回退。密码由 `coreautha` 处理，Auleum 不接触明文。面板期间物理键鼠放行给系统，合成键鼠仍被拦截，系统手势继续拦截，Esc 取消认证；鼠标指针临时显示。
+- 可选密码兜底默认关闭。开启后，Touch ID 不可用（无硬件、被锁定或暂时不可用）或验证失败时改用 `LAContext.evaluatePolicy(.deviceOwnerAuthentication)` 的系统密码面板；用户按 Esc 取消不会触发回退。密码由 `coreautha` 处理，Auleum 不接触明文。面板期间物理键鼠放行给系统，普通合成键鼠仍被拦截，远程兼容模式下已知远控来源和虚拟 HID 放行，系统手势在严格模式继续拦截、远程模式放行，Esc 取消认证；鼠标指针临时显示。远程兼容模式且开启密码兜底时，撤幕请求优先选择密码面板。
 - 起幕前检查可用验证方式：有 Touch ID，或开启密码兜底且系统验证可用；两者都没有时拒绝起幕，避免开启后无法正常退出。
 - 权限撤销、tap 失效、覆盖窗口创建失败和睡眠都保持幕帘：记录降级、持续重试，恢复后自动补涂。只有 Touch ID/密码验证、`panic` 或进程退出会真正撤幕。
 - **降级可观测**：`status` 返回 `degraded` / `degraded_reason`，`doctor` 在降级时列出原因，菜单栏提示和状态面板的「保护降级」卡片也带上最近一次失败原因；恢复后清空。
@@ -68,7 +70,7 @@ auleumctl          瘦客户端，不需要任何权限
 - **输入失效保护**：后台 watchdog 每 500ms 检查主 tap、手势 tap 和两项权限；任一失效都保持幕帘，记录降级并持续重试，不会自动撤幕。
 - **反复失效熔断**：tap 在 10 秒内被系统禁用并重试 5 次仍不稳定时，按降级处理并保持幕帘；稳定 30 秒后清除熔断状态。
 - **权限撤销保护**：幕帘期间撤销录屏或设备控制权限不会自动撤幕；保持遮挡，权限恢复后自动重挂 tap 并补涂。
-- **空闲输入来源**：自动起幕读取 `IOHIDSystem.HIDIdleTime`，只把真实 HID 操作视为“有人在用”，Agent 合成事件不会让空闲阈值永远达不到。
+- **空闲输入来源**：自动起幕读取 `IOHIDSystem.HIDIdleTime`，只把真实 HID 操作视为“有人在用”，Agent 合成事件不会让空闲阈值永远达不到。远程兼容模式下改用 combined session state，把远控注入的键鼠也算作有人在使用，避免正在被远控时自动起幕。
 - **主线程故障保护**：主线程连续 8 秒没有心跳时，后台 watchdog 结束进程，让 macOS 恢复 gamma 和物理输入；已安装 LaunchAgent 时会自动拉起。
 - **分辨率**：截图/录屏按 `backingScaleFactor` 还原真实像素。
 

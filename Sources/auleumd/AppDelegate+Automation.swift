@@ -15,7 +15,9 @@ extension AppDelegate {
     }
 
     func tickAutomation(now: Date = Date()) {
-        let idleSeconds = InputIdleMonitor.secondsSinceLastInput()
+        let idleSeconds = InputIdleMonitor.secondsSinceLastInput(
+            includeSynthetic: effectiveRemoteMode
+        )
         if idleSeconds < 5 {
             idleTriggerArmed = true
         }

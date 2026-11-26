@@ -72,11 +72,31 @@ public enum HotkeyPolicy {
     public static func matches(eventKeyCode: Int64,
                                flags: CGEventFlags,
                                sourcePID: Int32,
+                               sourceStateID: Int64? = nil,
                                expectedKeyCode: Int64 = defaultKeyCode,
                                expectedModifiers: CGEventFlags = defaultModifiers) -> Bool {
+        let stateIsPhysical = sourceStateID == nil
+            || sourceStateID == Int64(CGEventSourceStateID.hidSystemState.rawValue)
+        return sourcePID == 0
+            && stateIsPhysical
+            && matchesIgnoringSource(
+                eventKeyCode: eventKeyCode,
+                flags: flags,
+                expectedKeyCode: expectedKeyCode,
+                expectedModifiers: expectedModifiers
+            )
+    }
+
+    /// 已知远控来源的快捷键匹配。远控进程和虚拟 HID 的 PID/stateID 与
+    /// 本机 HID 不同，调用方已自行确认来源可信后再用这个入口。
+    public static func matchesIgnoringSource(eventKeyCode: Int64,
+                                             flags: CGEventFlags,
+                                             expectedKeyCode: Int64 = defaultKeyCode,
+                                             expectedModifiers: CGEventFlags = defaultModifiers) -> Bool {
         let relevant = flags.intersection(relevantModifiers)
         let expected = expectedModifiers.intersection(relevantModifiers)
-        return sourcePID == 0 && eventKeyCode == expectedKeyCode && relevant == expected
+        return eventKeyCode == expectedKeyCode
+            && relevant == expected
     }
 
     public static func displayString(keyCode: Int64, modifiers: CGEventFlags) -> String {

@@ -36,6 +36,8 @@ extension SettingsWindowController {
         for control in [
             hideCursorSwitch,
             passwordFallbackSwitch,
+            remoteCompatibilitySwitch,
+            remoteAutoSwitch,
             launchAtLoginSwitch,
             clamshellSwitch,
             presentationSwitch,
@@ -43,6 +45,8 @@ extension SettingsWindowController {
             control.controlSize = .small
             control.translatesAutoresizingMaskIntoConstraints = false
         }
+        remoteCompatibilitySwitch.target = self
+        remoteCompatibilitySwitch.action = #selector(remoteCompatibilityChanged)
 
         let rows: [NSView] = [
             AuleumSettingRow(
@@ -67,13 +71,23 @@ extension SettingsWindowController {
             ),
             AuleumSettingRow(
                 title: "隐藏鼠标指针",
-                detail: "幕帘期间隐藏指针，不影响 Agent 截图。",
+                detail: "幕帘期间隐藏指针；远程兼容时强制显示。",
                 control: hideCursorSwitch
             ),
             AuleumSettingRow(
                 title: "密码验证兜底",
                 detail: "Touch ID 不可用或验证失败时改用系统密码面板；默认关闭。",
                 control: passwordFallbackSwitch
+            ),
+            AuleumSettingRow(
+                title: "远程控制兼容",
+                detail: "幕帘期间放行远控键鼠并显示指针；物理键鼠仍拦截。",
+                control: remoteCompatibilitySwitch
+            ),
+            AuleumSettingRow(
+                title: "自动识别远控",
+                detail: "检测到 UU、向日葵、AnyDesk、RustDesk、屏幕共享等进程时自动开启。",
+                control: remoteAutoSwitch
             ),
             AuleumSettingRow(
                 title: "开机自启",
@@ -99,7 +113,7 @@ extension SettingsWindowController {
             weight: .semibold
         )
         let noteText = AuleumTheme.label(
-            "验证界面显示在幕帘中央，指纹比对仍由系统完成。密码兜底默认关闭；开启后 Touch ID 不可用或验证失败时改用系统密码面板，期间物理键鼠放行给系统面板，合成输入仍被拦截。没有可用验证方式时不会允许起幕；应急撤幕使用 panic 或结束进程。",
+            "验证界面显示在幕帘中央，指纹比对仍由系统完成。密码兜底默认关闭；开启后 Touch ID 不可用或验证失败时改用系统密码面板，期间物理键鼠放行给系统面板，合成输入仍被拦截。远程兼容开启时，已知远控进程和虚拟 HID 设备可以操作被幕帘挡住的桌面，鼠标指针会保持可见；本机物理键鼠仍然拦截。没有可用验证方式时不会允许起幕；应急撤幕使用 panic 或结束进程。",
             size: 10.5,
             color: AuleumTheme.secondaryInk
         )

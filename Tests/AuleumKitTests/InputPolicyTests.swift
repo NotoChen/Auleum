@@ -5,186 +5,305 @@ import Testing
 
 @Suite("Input policy")
 struct InputPolicyTests {
+    private func disposition(
+        origin: InputOrigin,
+        rawEventType: UInt32 = CGEventType.keyDown.rawValue,
+        keyCode: Int64? = 0,
+        isRepeat: Bool = false,
+        enabled: Bool = true,
+        remoteMode: Bool = false,
+        authenticationMode: Bool = false,
+        passwordAuthentication: Bool = false
+    ) -> InputDisposition {
+        InputPolicy.disposition(
+            rawEventType: rawEventType,
+            keyCode: keyCode,
+            isRepeat: isRepeat,
+            origin: origin,
+            isEnabled: enabled,
+            remoteMode: remoteMode,
+            authenticationMode: authenticationMode,
+            passwordAuthentication: passwordAuthentication
+        )
+    }
+
+    @Test("Origin requires HID state and no software marker")
+    func originClassification() {
+        #expect(InputPolicy.origin(
+            sourcePID: 0,
+            sourceStateID: 1
+        ) == .physical)
+        #expect(InputPolicy.origin(
+            sourcePID: 0,
+            sourceStateID: 1,
+            sourceUserData: 100
+        ) == .synthetic)
+        #expect(InputPolicy.origin(
+            sourcePID: 0,
+            sourceStateID: 0
+        ) == .synthetic)
+        #expect(InputPolicy.origin(
+            sourcePID: 4242,
+            sourceStateID: 1
+        ) == .synthetic)
+        #expect(InputPolicy.origin(
+            sourcePID: 4242,
+            sourceStateID: 1,
+            isRemoteProcess: true
+        ) == .remoteProcess)
+        #expect(InputPolicy.origin(
+            sourcePID: 4242,
+            sourceStateID: 1,
+            isRemoteProcess: true,
+            isDeniedProcess: true
+        ) == .deniedProcess)
+        #expect(InputPolicy.origin(
+            sourcePID: 0,
+            sourceStateID: 1,
+            isVirtualDevice: true
+        ) == .virtualDevice)
+        #expect(InputPolicy.origin(
+            sourcePID: 0,
+            sourceStateID: 1,
+            isVirtualDevice: true,
+            isDeniedVirtualDevice: true
+        ) == .deniedVirtualDevice)
+        #expect(InputPolicy.origin(
+            sourcePID: 0,
+            sourceStateID: 0,
+            isVirtualDevice: true
+        ) == .synthetic)
+    }
+
     @Test("Physical keyboard and mouse are blocked")
     func physicalInputIsBlocked() {
-        #expect(InputPolicy.disposition(
-            rawEventType: CGEventType.keyDown.rawValue,
-            keyCode: 0,
-            isRepeat: false,
-            sourcePID: 0,
-            isEnabled: true
-        ) == .block)
-        #expect(InputPolicy.disposition(
+        #expect(disposition(origin: .physical) == .block)
+        #expect(disposition(
+            origin: .physical,
             rawEventType: CGEventType.leftMouseDown.rawValue,
-            keyCode: nil,
-            isRepeat: false,
-            sourcePID: 0,
-            isEnabled: true
+            keyCode: nil
         ) == .block)
     }
 
-    @Test("Synthetic input passes through")
+    @Test("Synthetic and remote process input passes through")
     func syntheticInputPasses() {
-        #expect(InputPolicy.disposition(
-            rawEventType: CGEventType.keyDown.rawValue,
-            keyCode: 0,
-            isRepeat: false,
-            sourcePID: 4242,
-            isEnabled: true
-        ) == .pass)
-        #expect(InputPolicy.disposition(
+        #expect(disposition(origin: .synthetic) == .pass)
+        #expect(disposition(origin: .remoteProcess) == .pass)
+        #expect(disposition(
+            origin: .synthetic,
             rawEventType: CGEventType.leftMouseDown.rawValue,
-            keyCode: nil,
-            isRepeat: false,
-            sourcePID: 4242,
-            isEnabled: true
+            keyCode: nil
         ) == .pass)
+    }
+
+    @Test("Denied processes stay blocked")
+    func deniedProcessIsBlocked() {
+        #expect(disposition(origin: .deniedProcess) == .block)
+        #expect(disposition(
+            origin: .deniedProcess,
+            remoteMode: true
+        ) == .block)
+    }
+
+    @Test("Virtual HID devices only pass in remote mode")
+    func virtualDevicePolicy() {
+        #expect(disposition(origin: .virtualDevice) == .block)
+        #expect(disposition(
+            origin: .virtualDevice,
+            remoteMode: true
+        ) == .pass)
+        #expect(disposition(
+            origin: .deniedVirtualDevice,
+            remoteMode: true
+        ) == .block)
     }
 
     @Test("Touch ID hold only starts from a physical Esc down")
     func escapeHoldIsPhysicalOnly() {
-        #expect(InputPolicy.disposition(
-            rawEventType: CGEventType.keyDown.rawValue,
-            keyCode: 53,
-            isRepeat: false,
-            sourcePID: 0,
-            isEnabled: true
+        #expect(disposition(
+            origin: .physical,
+            keyCode: 53
         ) == .beginHold)
-        #expect(InputPolicy.disposition(
-            rawEventType: CGEventType.keyDown.rawValue,
+        #expect(disposition(
+            origin: .physical,
             keyCode: 53,
-            isRepeat: true,
-            sourcePID: 0,
-            isEnabled: true
+            isRepeat: true
         ) == .block)
-        #expect(InputPolicy.disposition(
+        #expect(disposition(
+            origin: .physical,
             rawEventType: CGEventType.keyUp.rawValue,
-            keyCode: 53,
-            isRepeat: false,
-            sourcePID: 0,
-            isEnabled: true
+            keyCode: 53
         ) == .cancelHold)
-        #expect(InputPolicy.disposition(
-            rawEventType: CGEventType.keyDown.rawValue,
+        #expect(disposition(
+            origin: .synthetic,
+            keyCode: 53
+        ) == .pass)
+        #expect(disposition(
+            origin: .virtualDevice,
             keyCode: 53,
-            isRepeat: false,
-            sourcePID: 4242,
-            isEnabled: true
+            remoteMode: true
         ) == .pass)
     }
 
-    @Test("System gesture stream is blocked while enabled")
+    @Test("System gesture stream is blocked in strict mode and passed remotely")
     func gesturesAreBlocked() {
-        #expect(InputPolicy.disposition(
+        #expect(disposition(
+            origin: .synthetic,
+            rawEventType: 30,
+            keyCode: nil
+        ) == .block)
+        #expect(disposition(
+            origin: .synthetic,
             rawEventType: 30,
             keyCode: nil,
-            isRepeat: false,
-            sourcePID: 4242,
-            isEnabled: true
-        ) == .block)
+            remoteMode: true
+        ) == .pass)
     }
 
     @Test("Authentication mode blocks physical input but leaves synthetic input alone")
     func authenticationModeBlocksPhysicalInput() {
-        #expect(InputPolicy.disposition(
-            rawEventType: CGEventType.keyDown.rawValue,
-            keyCode: 0,
-            isRepeat: false,
-            sourcePID: 0,
-            isEnabled: true,
+        #expect(disposition(
+            origin: .physical,
             authenticationMode: true
         ) == .block)
-        #expect(InputPolicy.disposition(
+        #expect(disposition(
+            origin: .physical,
             rawEventType: CGEventType.leftMouseDown.rawValue,
             keyCode: nil,
-            isRepeat: false,
-            sourcePID: 0,
-            isEnabled: true,
             authenticationMode: true
         ) == .block)
-        #expect(InputPolicy.disposition(
+        #expect(disposition(
+            origin: .physical,
             rawEventType: CGEventType.keyUp.rawValue,
             keyCode: 53,
-            isRepeat: false,
-            sourcePID: 0,
-            isEnabled: true,
             authenticationMode: true
         ) == .block)
-        #expect(InputPolicy.disposition(
-            rawEventType: CGEventType.keyDown.rawValue,
-            keyCode: 0,
-            isRepeat: false,
-            sourcePID: 4242,
-            isEnabled: true,
+        #expect(disposition(
+            origin: .synthetic,
             authenticationMode: true
         ) == .pass)
-        #expect(InputPolicy.disposition(
+        #expect(disposition(
+            origin: .remoteProcess,
+            authenticationMode: true
+        ) == .pass)
+        #expect(disposition(
+            origin: .synthetic,
             rawEventType: 30,
             keyCode: nil,
-            isRepeat: false,
-            sourcePID: 0,
-            isEnabled: true,
             authenticationMode: true
+        ) == .block)
+        #expect(disposition(
+            origin: .synthetic,
+            rawEventType: 30,
+            keyCode: nil,
+            remoteMode: true,
+            authenticationMode: true
+        ) == .pass)
+    }
+
+    @Test("Password auth passes trusted input but blocks agent injection")
+    func passwordAuthInputPolicy() {
+        #expect(disposition(
+            origin: .physical,
+            authenticationMode: true,
+            passwordAuthentication: true
+        ) == .pass)
+        #expect(disposition(
+            origin: .physical,
+            rawEventType: CGEventType.leftMouseDown.rawValue,
+            keyCode: nil,
+            authenticationMode: true,
+            passwordAuthentication: true
+        ) == .pass)
+        #expect(disposition(
+            origin: .synthetic,
+            authenticationMode: true,
+            passwordAuthentication: true
+        ) == .block)
+        #expect(disposition(
+            origin: .remoteProcess,
+            authenticationMode: true,
+            passwordAuthentication: true
+        ) == .block)
+        #expect(disposition(
+            origin: .remoteProcess,
+            remoteMode: true,
+            authenticationMode: true,
+            passwordAuthentication: true
+        ) == .pass)
+        #expect(disposition(
+            origin: .virtualDevice,
+            remoteMode: true,
+            authenticationMode: true,
+            passwordAuthentication: true
+        ) == .pass)
+        #expect(disposition(
+            origin: .virtualDevice,
+            authenticationMode: true,
+            passwordAuthentication: true
+        ) == .block)
+        #expect(disposition(
+            origin: .deniedProcess,
+            remoteMode: true,
+            authenticationMode: true,
+            passwordAuthentication: true
+        ) == .block)
+        #expect(disposition(
+            origin: .synthetic,
+            rawEventType: 30,
+            keyCode: nil,
+            authenticationMode: true,
+            passwordAuthentication: true
         ) == .block)
     }
 
-    @Test("Password auth passes physical input but blocks synthetic input")
-    func passwordAuthInputPolicy() {
-        #expect(InputPolicy.disposition(
-            rawEventType: CGEventType.keyDown.rawValue,
-            keyCode: 0,
-            isRepeat: false,
-            sourcePID: 0,
-            isEnabled: true,
-            authenticationMode: true,
-            passwordAuthentication: true
-        ) == .pass)
-        #expect(InputPolicy.disposition(
-            rawEventType: CGEventType.leftMouseDown.rawValue,
-            keyCode: nil,
-            isRepeat: false,
-            sourcePID: 0,
-            isEnabled: true,
-            authenticationMode: true,
-            passwordAuthentication: true
-        ) == .pass)
-        #expect(InputPolicy.disposition(
-            rawEventType: CGEventType.keyDown.rawValue,
-            keyCode: 0,
-            isRepeat: false,
-            sourcePID: 4242,
-            isEnabled: true,
-            authenticationMode: true,
-            passwordAuthentication: true
-        ) == .block)
-        #expect(InputPolicy.disposition(
-            rawEventType: CGEventType.leftMouseDown.rawValue,
-            keyCode: nil,
-            isRepeat: false,
-            sourcePID: 4242,
-            isEnabled: true,
-            authenticationMode: true,
-            passwordAuthentication: true
-        ) == .block)
-        #expect(InputPolicy.disposition(
-            rawEventType: 30,
-            keyCode: nil,
-            isRepeat: false,
-            sourcePID: 0,
-            isEnabled: true,
-            authenticationMode: true,
-            passwordAuthentication: true
-        ) == .block)
+    @Test("Remote sources can start exit gestures only in remote mode")
+    func exitGestureOrigins() {
+        #expect(InputPolicy.canTriggerExitGesture(
+            origin: .physical,
+            remoteMode: false
+        ))
+        #expect(!InputPolicy.canTriggerExitGesture(
+            origin: .remoteProcess,
+            remoteMode: false
+        ))
+        #expect(InputPolicy.canTriggerExitGesture(
+            origin: .remoteProcess,
+            remoteMode: true
+        ))
+        #expect(!InputPolicy.canTriggerExitGesture(
+            origin: .virtualDevice,
+            remoteMode: false
+        ))
+        #expect(InputPolicy.canTriggerExitGesture(
+            origin: .virtualDevice,
+            remoteMode: true
+        ))
+        #expect(!InputPolicy.canTriggerExitGesture(
+            origin: .synthetic,
+            remoteMode: true
+        ))
+        #expect(!InputPolicy.canTriggerExitGesture(
+            origin: .deniedProcess,
+            remoteMode: true
+        ))
+        #expect(!InputPolicy.canTriggerExitGesture(
+            origin: .deniedVirtualDevice,
+            remoteMode: true
+        ))
     }
 
     @Test("Disabled guard passes everything")
     func disabledGuardPasses() {
-        #expect(InputPolicy.disposition(
-            rawEventType: CGEventType.keyDown.rawValue,
-            keyCode: 0,
-            isRepeat: false,
-            sourcePID: 0,
-            isEnabled: false
+        #expect(disposition(
+            origin: .physical,
+            enabled: false
+        ) == .pass)
+        #expect(disposition(
+            origin: .deniedVirtualDevice,
+            rawEventType: 30,
+            keyCode: nil,
+            enabled: false
         ) == .pass)
     }
 }
@@ -256,6 +375,12 @@ struct GlobalHotkeyTests {
         ))
         #expect(!HotkeyPolicy.matches(
             eventKeyCode: HotkeyPolicy.keyCode,
+            flags: modifiers,
+            sourcePID: 0,
+            sourceStateID: 0
+        ))
+        #expect(!HotkeyPolicy.matches(
+            eventKeyCode: HotkeyPolicy.keyCode,
             flags: [.maskControl, .maskCommand],
             sourcePID: 0
         ))
@@ -263,6 +388,23 @@ struct GlobalHotkeyTests {
             eventKeyCode: HotkeyPolicy.keyCode,
             flags: modifiers.union(.maskShift),
             sourcePID: 0
+        ))
+    }
+
+    @Test("Remote sources match the exit hotkey without HID source fields")
+    func injectedHotkeyMatching() {
+        let modifiers: CGEventFlags = [.maskControl, .maskAlternate, .maskCommand]
+        #expect(HotkeyPolicy.matchesIgnoringSource(
+            eventKeyCode: HotkeyPolicy.keyCode,
+            flags: modifiers
+        ))
+        #expect(!HotkeyPolicy.matchesIgnoringSource(
+            eventKeyCode: HotkeyPolicy.keyCode,
+            flags: [.maskControl, .maskCommand]
+        ))
+        #expect(!HotkeyPolicy.matchesIgnoringSource(
+            eventKeyCode: 1,
+            flags: modifiers
         ))
     }
 

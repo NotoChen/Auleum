@@ -12,6 +12,12 @@ public final class Shield {
     public private(set) var lastError: String?
     /// 幕帘期间是否隐藏鼠标指针（设置里可关）。
     public var hidesCursor = true
+    /// 远程兼容模式：远控端需要看到指针，否则鼠标完全不可见。
+    public var remoteMode = false {
+        didSet {
+            if oldValue != remoteMode { applyCursorVisibility() }
+        }
+    }
     /// 输出层纯色。gamma 表没有空间信息，不能承载图片或文字。
     public var backgroundColor: AuleumColor = .black
     private var cursorHiddenDisplayIDs: [CGDirectDisplayID] = []
@@ -250,7 +256,7 @@ public final class Shield {
     /// 设置里的「隐藏指针」变化后立即生效，不需要重新升幕帘。
     public func applyCursorVisibility() {
         guard isUp, !cursorRevealedForAuth else { return }
-        if hidesCursor {
+        if hidesCursor, !remoteMode {
             let visibleCursorIDs = Set(cursorHiddenDisplayIDs)
             for screen in ScreenInventory.current() where !visibleCursorIDs.contains(screen.displayID) {
                 CGDisplayHideCursor(screen.displayID)
