@@ -105,6 +105,8 @@ final class AuleumPresentationPreviewView: NSView {
     private let editHintContainer = AuleumPassthroughView()
     private var loadedImagePath: String?
     private var loadedImage: CGImage?
+    private var loadedVideoPath: String?
+    private var loadedAmbientStyle: PresentationAmbientStyle?
 
     override init(frame frameRect: NSRect) {
         canvas = PresentationCanvasView(
@@ -191,6 +193,8 @@ final class AuleumPresentationPreviewView: NSView {
 
     func update(color: NSColor,
                 imagePath: String?,
+                videoPath: String? = nil,
+                ambientStyle: PresentationAmbientStyle = .off,
                 clockStyle: PresentationClockStyle,
                 imageFocus: CGPoint = CGPoint(x: 0.5, y: 0.5),
                 imageZoom: CGFloat = 1,
@@ -218,6 +222,15 @@ final class AuleumPresentationPreviewView: NSView {
                 PresentationBackgroundLoader.load(path: $0, maxPixelSize: 1024)
             }
         }
+        if loadedVideoPath != videoPath {
+            loadedVideoPath = videoPath
+            canvas.setVideoPath(videoPath)
+        }
+        if loadedAmbientStyle != ambientStyle {
+            loadedAmbientStyle = ambientStyle
+            canvas.setAmbientStyle(ambientStyle)
+        }
+        canvas.setVideoPlayback(active: displayEnabled)
         canvas.setBackgroundImage(
             loadedImage,
             focus: imageFocus,
@@ -244,6 +257,10 @@ final class AuleumPresentationPreviewView: NSView {
                 returnText: returnText
             )
         )
+    }
+
+    func setVideoPlayback(active: Bool) {
+        canvas.setVideoPlayback(active: active)
     }
 }
 

@@ -20,6 +20,25 @@ extension SettingsWindowController {
         presentationImageButton.action = #selector(choosePresentationImage)
         presentationClearButton.target = self
         presentationClearButton.action = #selector(clearPresentationImage)
+        presentationVideoLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        presentationVideoLabel.textColor = AuleumTheme.secondaryInk
+        presentationVideoLabel.lineBreakMode = .byTruncatingMiddle
+        presentationVideoButton.target = self
+        presentationVideoButton.action = #selector(choosePresentationVideo)
+        presentationVideoClearButton.target = self
+        presentationVideoClearButton.action = #selector(clearPresentationVideo)
+        presentationAmbientControl.segmentCount =
+            PresentationAmbientStyle.allCases.count
+        for (index, style) in PresentationAmbientStyle.allCases.enumerated() {
+            presentationAmbientControl.setLabel(style.displayName, forSegment: index)
+            presentationAmbientControl.setWidth(58, forSegment: index)
+        }
+        presentationAmbientControl.trackingMode = .selectOne
+        presentationAmbientControl.segmentStyle = .rounded
+        presentationAmbientControl.controlSize = .small
+        presentationAmbientControl.target = self
+        presentationAmbientControl.action = #selector(presentationAmbientChanged)
+        presentationAmbientControl.translatesAutoresizingMaskIntoConstraints = false
         clockStylePicker.onSelect = { [weak self] style in
             self?.clockStyleChanged(style)
         }
@@ -79,6 +98,14 @@ extension SettingsWindowController {
         imageControls.addArrangedSubview(presentationClearButton)
         presentationImageLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
+        let videoControls = NSStackView()
+        videoControls.orientation = .horizontal
+        videoControls.spacing = 8
+        videoControls.addArrangedSubview(presentationVideoLabel)
+        videoControls.addArrangedSubview(presentationVideoButton)
+        videoControls.addArrangedSubview(presentationVideoClearButton)
+        presentationVideoLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
         let switchRow = AuleumSettingRow(
             title: "启用窗口展示模式",
             detail: "默认开启；关闭时改用输出层幕帘。",
@@ -109,6 +136,16 @@ extension SettingsWindowController {
             title: "背景图片",
             detail: "选择后等比铺满，取代默认背景。",
             control: imageControls
+        )
+        let videoRow = AuleumSettingRow(
+            title: "背景视频",
+            detail: "循环播放并静音；设置后优先于背景图片。",
+            control: videoControls
+        )
+        let ambientRow = AuleumSettingRow(
+            title: "动态背景",
+            detail: "没有图片或视频时使用内置缓慢光影。",
+            control: presentationAmbientControl
         )
         let mainRoleRow = AuleumSettingRow(
             title: "主屏角色",
@@ -206,6 +243,8 @@ extension SettingsWindowController {
             componentRow,
             backdropRow,
             imageRow,
+            videoRow,
+            ambientRow,
         ])
         let advancedCard = card(containing: [
             clockContainer,
@@ -290,6 +329,20 @@ extension SettingsWindowController {
         presentationImageButton.isEnabled = presentationEnabled
         presentationClearButton.isEnabled = presentationEnabled
             && !presentationImagePath.isEmpty
+        presentationVideoButton.title = presentationVideoPath.isEmpty
+            ? "选择视频…"
+            : "更换视频…"
+        presentationVideoButton.isEnabled = presentationEnabled
+        presentationVideoClearButton.isEnabled = presentationEnabled
+            && !presentationVideoPath.isEmpty
+        let ambientIndex = PresentationAmbientStyle.allCases.firstIndex(
+            of: presentationAmbientStyle
+        ) ?? 0
+        if presentationAmbientControl.segmentCount > ambientIndex {
+            presentationAmbientControl.selectedSegment = ambientIndex
+        }
+        presentationAmbientControl.isEnabled = presentationEnabled
+        presentationAmbientControl.alphaValue = presentationEnabled ? 1 : 0.5
         mainRolePopup.isEnabled = presentationEnabled
         secondaryRolePopup.isEnabled = presentationEnabled
         focusXField.isEnabled = presentationEnabled
@@ -365,6 +418,10 @@ extension SettingsWindowController {
         presentationPreview.update(
             color: colorWell.color,
             imagePath: presentationImagePath,
+            videoPath: presentationVideoPath.isEmpty
+                ? nil
+                : presentationVideoPath,
+            ambientStyle: presentationAmbientStyle,
             clockStyle: selectedClockStyle,
             imageFocus: CGPoint(
                 x: focusXField.value,
@@ -442,6 +499,15 @@ extension SettingsWindowController {
             )
             return
         }
+        let videoPath = presentationVideoPath
+        if !videoPath.isEmpty,
+           !PresentationVideoLoader.isLoadable(path: videoPath) {
+            presentAlert(
+                title: "背景视频无法读取",
+                message: "请选择有效的视频文件，或清除路径改用图片或默认背景。"
+            )
+            return
+        }
         guard let onPreviewPresentation else {
             presentAlert(
                 title: "全屏试看不可用",
@@ -458,6 +524,8 @@ extension SettingsWindowController {
                     blue: Double(color.blueComponent)
                 ),
                 imagePath: imagePath.isEmpty ? nil : imagePath,
+                videoPath: videoPath.isEmpty ? nil : videoPath,
+                ambientStyle: presentationAmbientStyle,
                 clockStyle: selectedClockStyle,
                 imageFocus: CGPoint(
                     x: focusXField.value,
@@ -485,6 +553,9 @@ extension SettingsWindowController {
         if panel.runModal() == .OK, let url = panel.url {
             presentationImagePath = url.path
             presentationImageLabel.stringValue = url.lastPathComponent
+            // 图片和视频只保留一个主背景，避免两个入口互相覆盖。
+            presentationVideoPath = ""
+            presentationVideoLabel.stringValue = "未选择"
             refreshPresentationPreview()
             refreshScenePreview()
             updatePresentationControls()
@@ -497,6 +568,64 @@ extension SettingsWindowController {
         refreshPresentationPreview()
         refreshScenePreview()
         updatePresentationControls()
+    }
+
+    @objc func choosePresentationVideo() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = PresentationVideoLoader.allowedContentTypes
+        panel.prompt = "使用这个视频"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard PresentationVideoLoader.isLoadable(path: url.path) else {
+            presentAlert(
+                title: "视频格式不受支持",
+                message: "请选择 MOV、MP4 或 M4V 等 AVFoundation 可播放的视频文件。"
+            )
+            return
+        }
+        presentationVideoButton.isEnabled = false
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let playable = await PresentationVideoLoader.isPlayable(
+                path: url.path
+            )
+            self.presentationVideoButton.isEnabled =
+                self.presentationSwitch.state == .on
+            guard playable else {
+                self.presentAlert(
+                    title: "视频无法播放",
+                    message: "文件没有可解码的视频轨，或格式不被系统支持。"
+                )
+                return
+            }
+            self.presentationVideoPath = url.path
+            self.presentationVideoLabel.stringValue = url.lastPathComponent
+            self.presentationImagePath = ""
+            self.presentationImageLabel.stringValue = "纯色背景"
+            self.refreshPresentationPreview()
+            self.refreshScenePreview()
+            self.updatePresentationControls()
+        }
+    }
+
+    @objc func clearPresentationVideo() {
+        presentationVideoPath = ""
+        presentationVideoLabel.stringValue = "未选择"
+        refreshPresentationPreview()
+        refreshScenePreview()
+        updatePresentationControls()
+    }
+
+    @objc func presentationAmbientChanged() {
+        let styles = PresentationAmbientStyle.allCases
+        let index = presentationAmbientControl.selectedSegment
+        guard styles.indices.contains(index) else { return }
+        presentationAmbientStyle = styles[index]
+        refreshPresentationPreview()
+        refreshScenePreview()
+        updateDirtyState()
     }
 
     @objc func resetColor() {

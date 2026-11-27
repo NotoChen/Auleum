@@ -21,6 +21,8 @@ public final class PresentationOverlay {
     private var backgroundImage: CGImage?
     public var backgroundColor: AuleumColor = .black
     public var imagePath: String?
+    public var videoPath: String?
+    public var ambientStyle: PresentationAmbientStyle = .off
     public var clockStyle: PresentationClockStyle = .digital
     public var imageFocus = CGPoint(x: 0.5, y: 0.5)
     public var imageZoom: CGFloat = 1
@@ -34,10 +36,20 @@ public final class PresentationOverlay {
     /// 远程兼容模式：远控端需要看到指针，否则鼠标完全不可见。
     public var remoteMode = false {
         didSet {
-            if oldValue != remoteMode { applyCursorVisibility() }
+            guard oldValue != remoteMode else { return }
+            applyCursorVisibility()
+            applyPointerEventPolicy()
         }
     }
-    public var blocksPointerEvents = false
+    /// 是否让展示窗口自己接住指针事件。真实幕帘不接住：物理输入由 HID
+    /// 事件 tap 拦截，远控和 Agent 的合成点击必须落到下层应用。全屏试看
+    /// 会打开它，避免试看期间误点后面的应用。
+    public var blocksPointerEvents = false {
+        didSet {
+            guard oldValue != blocksPointerEvents else { return }
+            applyPointerEventPolicy()
+        }
+    }
 #if DEBUG
     public var allowsScreenCapture = false
 #endif
@@ -63,10 +75,14 @@ public final class PresentationOverlay {
                      usesDefaultBackdrop: Bool = true,
                      componentBackground: PresentationComponentBackground = .auto,
                      widgets: PresentationClockWidgets = PresentationClockWidgets(),
+                     videoPath: String? = nil,
+                     ambientStyle: PresentationAmbientStyle = .off,
                      status: PresentationStatus?) -> Bool {
         close()
         backgroundColor = color
         self.imagePath = imagePath
+        self.videoPath = (videoPath?.isEmpty == true) ? nil : videoPath
+        self.ambientStyle = ambientStyle
         self.clockStyle = clockStyle
         self.imageFocus = imageFocus
         self.imageZoom = imageZoom
@@ -79,17 +95,22 @@ public final class PresentationOverlay {
         lastStatus = status
         guard !screens.isEmpty else { return false }
 
+        let hasVideo = !(videoPath ?? "").isEmpty
         if let imagePath, !imagePath.isEmpty {
             let target = PresentationBackgroundLoader.recommendedPixelSize(
                 for: screens
             )
-            guard let image = PresentationBackgroundLoader.load(
+            if let image = PresentationBackgroundLoader.load(
                 path: imagePath,
                 maxPixelSize: target
-            ) else {
+            ) {
+                backgroundImage = image
+            } else if hasVideo {
+                // 视频优先；图片读不到不应阻止视频幕帘启动。
+                backgroundImage = nil
+            } else {
                 return false
             }
-            backgroundImage = image
         } else {
             backgroundImage = nil
         }
@@ -98,9 +119,30 @@ public final class PresentationOverlay {
             let window = makeWindow(for: screen)
             windows.append(window)
         }
+        applyPointerEventPolicy()
         applyCursorVisibility()
         update(status: status)
         return true
+    }
+
+    /// 展示窗口何时应该忽略指针事件。真实幕帘传 `blocksPointerEvents =
+    /// false`，远控和合成点击直接落到下层应用；全屏试看传 `true`，窗口
+    /// 接住点击。远程兼容模式下无论调用方怎么设置都放行，否则远控端
+    /// 能看到桌面和指针，点击却全部落在幕帘窗口上。物理输入始终在 HID
+    /// 层被拦截，不依赖窗口这一层。
+    static func windowIgnoresMouseEvents(blocksPointerEvents: Bool,
+                                         remoteMode: Bool) -> Bool {
+        remoteMode || !blocksPointerEvents
+    }
+
+    private func applyPointerEventPolicy() {
+        let ignores = Self.windowIgnoresMouseEvents(
+            blocksPointerEvents: blocksPointerEvents,
+            remoteMode: remoteMode
+        )
+        for item in windows {
+            item.window.ignoresMouseEvents = ignores
+        }
     }
 
     /// 系统密码面板需要可见指针，认证结束后再按设置重新隐藏。
@@ -160,6 +202,24 @@ public final class PresentationOverlay {
                 zoom: imageZoom,
                 dim: imageDim
             )
+        }
+    }
+
+    /// 视频优先于图片；传 nil 清除播放器并回落到图片或默认背景。
+    /// 路径未变化时不重建播放器，避免保存无关设置时视频从头开始。
+    public func setVideoPath(_ path: String?) {
+        let next = (path?.isEmpty == true) ? nil : path
+        guard videoPath != next else { return }
+        videoPath = next
+        for item in windows {
+            item.canvas.setVideoPath(next)
+        }
+    }
+
+    public func setAmbientStyle(_ style: PresentationAmbientStyle) {
+        ambientStyle = style
+        for item in windows {
+            item.canvas.setAmbientStyle(style)
         }
     }
 
@@ -256,7 +316,9 @@ public final class PresentationOverlay {
                     for: screens
                 )
             )
-            guard backgroundImage != nil else { return false }
+            if backgroundImage == nil, (videoPath ?? "").isEmpty {
+                return false
+            }
         }
 
         let targets = Set(screens.map(\.displayID))
@@ -266,6 +328,7 @@ public final class PresentationOverlay {
                 where: { $0.screen.displayID == displayID }
             ) else { continue }
             let item = windows.remove(at: index)
+            item.canvas.stopVideo()
             item.window.orderOut(nil)
             item.window.close()
         }
@@ -291,6 +354,7 @@ public final class PresentationOverlay {
                 windows.append(makeWindow(for: screen))
             }
         }
+        applyPointerEventPolicy()
         applyCursorVisibility()
         update(status: lastStatus)
         return true
@@ -301,6 +365,7 @@ public final class PresentationOverlay {
     public func hideForAuth() {
         hideReturnHint(animated: false)
         for item in windows {
+            item.canvas.setVideoPlayback(active: false)
             item.window.level = AuthWindowLevel.value
             item.window.orderFrontRegardless()
         }
@@ -311,6 +376,7 @@ public final class PresentationOverlay {
         for item in windows {
             item.window.level = Self.overlayLevel
             item.window.orderFrontRegardless()
+            item.canvas.setVideoPlayback(active: true)
         }
         applyCursorVisibility()
         update(status: lastStatus)
@@ -321,11 +387,15 @@ public final class PresentationOverlay {
         cursorRevealedForAuth = false
         restoreCursor()
         for item in windows {
+            item.canvas.stopVideo()
             item.window.orderOut(nil)
             item.window.close()
         }
         windows.removeAll()
         backgroundImage = nil
+        // 保留 videoPath / ambientStyle：锁屏或切换用户后 overlay 会先 close，
+        // 解锁时 screensChanged 通过 reconcile 重建窗口，需要沿用当前背景；
+        // 下一次 show 会重新写入这两个值。
         lastStatus = nil
     }
 
@@ -337,7 +407,7 @@ public final class PresentationOverlay {
     }
 
     private func makeWindow(for screen: ScreenSnapshot) -> ScreenWindow {
-        let window = NSWindow(
+        let window = PresentationOverlayWindow(
             contentRect: screen.frame,
             styleMask: .borderless,
             backing: .buffered,
@@ -350,7 +420,10 @@ public final class PresentationOverlay {
         window.backgroundColor = presentationNSColor(backgroundColor)
         window.isOpaque = true
         window.hasShadow = false
-        window.ignoresMouseEvents = !blocksPointerEvents
+        window.ignoresMouseEvents = Self.windowIgnoresMouseEvents(
+            blocksPointerEvents: blocksPointerEvents,
+            remoteMode: remoteMode
+        )
 #if DEBUG
         window.sharingType = allowsScreenCapture ? .readOnly : .none
 #else
@@ -370,7 +443,9 @@ public final class PresentationOverlay {
             customLayout: customLayout,
             usesDefaultBackdrop: usesDefaultBackdrop,
             componentBackground: componentBackground,
-            widgets: clockWidgets
+            widgets: clockWidgets,
+            videoPath: videoPath,
+            ambientStyle: ambientStyle
         )
         canvas.frame = NSRect(origin: .zero, size: screen.frame.size)
         canvas.autoresizingMask = [.width, .height]
@@ -380,4 +455,11 @@ public final class PresentationOverlay {
 
         return ScreenWindow(screen: screen, window: window, canvas: canvas)
     }
+}
+
+/// 展示窗口永远不需要键盘焦点。禁止成为 key/main，避免远控或合成点击
+/// 把焦点抢到 Auleum 上，导致后续键盘输入无处可去。
+private final class PresentationOverlayWindow: NSWindow {
+    override var canBecomeKey: Bool { false }
+    override var canBecomeMain: Bool { false }
 }

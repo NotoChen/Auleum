@@ -331,6 +331,11 @@ extension SettingsWindowController {
                     : presentationImagePath)
                 : profile.backgroundImagePath)
             : nil
+        let videoPath: String? = displayEnabled
+            && profile.backgroundImagePath.isEmpty
+            && !presentationVideoPath.isEmpty
+            ? presentationVideoPath
+            : nil
         let returnText = displayEnabled
             && profile.showsReturnTime
             && profile.protectionMinutes > 0
@@ -339,6 +344,8 @@ extension SettingsWindowController {
         scenePreview.update(
             color: colorWell.color,
             imagePath: imagePath,
+            videoPath: videoPath,
+            ambientStyle: presentationAmbientStyle,
             clockStyle: clockStyle,
             imageFocus: CGPoint(
                 x: focusXField.value,
@@ -373,10 +380,16 @@ extension SettingsWindowController {
 
     func updateSceneImageLabel(_ path: String) {
         if path.isEmpty {
-            let global = presentationImagePath
-            sceneImageLabel.stringValue = global.isEmpty
-                ? "跟随全局背景"
-                : "跟随全局 · \(URL(fileURLWithPath: global).lastPathComponent)"
+            let globalImage = presentationImagePath
+            let globalVideo = presentationVideoPath
+            if !globalVideo.isEmpty {
+                sceneImageLabel.stringValue =
+                    "跟随全局 · \(URL(fileURLWithPath: globalVideo).lastPathComponent)"
+            } else {
+                sceneImageLabel.stringValue = globalImage.isEmpty
+                    ? "跟随全局背景"
+                    : "跟随全局 · \(URL(fileURLWithPath: globalImage).lastPathComponent)"
+            }
         } else {
             sceneImageLabel.stringValue = URL(fileURLWithPath: path).lastPathComponent
         }

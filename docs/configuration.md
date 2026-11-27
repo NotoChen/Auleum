@@ -24,6 +24,8 @@
   "hasShownOnboarding": false,
   "presentationModeEnabled": true,
   "presentationImagePath": "",
+  "presentationVideoPath": "",
+  "presentationAmbientStyle": "off",
   "presentationClockStyle": "digital",
   "presentationLayout": "centered",
   "presentationCustomLayout": {
@@ -81,7 +83,7 @@ gamma 幕帘不支持图片或文字：gamma 表没有空间信息，任何可�
 | `remoteCompatibilityEnabled` | `true` | 幕帘期间放行已知远控进程的输入、显示鼠标指针并放行系统手势；本机物理键鼠仍然拦截。 |
 | `remoteAutoDetectEnabled` | `true` | 扫描 `UURemote`、`SunloginClient`、`AnyDesk`、`RustDesk`、`ToDesk`、`TeamViewer`、`Screen Sharing`、`ARDAgent`、Chrome Remote Desktop、VNC、NoMachine、Splashtop、LogMeIn 等进程，检测到时自动进入远程兼容模式。 |
 
-远程兼容模式只改变远控输入的放行方式，不会放行物理键鼠。手动开关可用状态面板的「远程兼容」卡片或命令行：
+远程兼容模式只改变远控输入的放行方式，不会放行物理键鼠。真实幕帘的展示窗口始终忽略指针事件：物理点击由事件 tap 拦截，远控和 Agent 的合成点击会落到下层应用；只有全屏试看会接住点击，避免误点后面的应用。展示窗口不会成为 key/main 窗口；远控模式下切幕后 Auleum 会主动让出应用焦点，保证远控键盘有前台应用可接收。手动开关可用状态面板的「远程兼容」卡片或命令行：
 
 ```bash
 auleumctl remote on      # 手动开启
@@ -90,9 +92,9 @@ auleumctl remote auto    # 清除手动覆盖，回到自动识别
 auleumctl remote status  # 查看模式、检测到的工具和 HID SPI 状态
 ```
 
-设置窗口保存后会清除手动覆盖并重新按配置计算。开启密码兜底时，远程模式下的撤幕请求优先使用系统密码面板，因为 Touch ID 需要本地手指；远程输入在密码面板期间放行，普通合成输入仍然拦截。
+只有远程设置本身变化时，保存设置才会清除手动覆盖并重新按配置计算。撤幕方式按来源选择：本机物理输入优先 Touch ID；远控输入发起的撤幕在开启密码兜底且系统验证可用时使用系统密码面板，未开启兜底时保持幕帘并提示；状态面板、定时任务、`auleumctl` 等非输入来源沿用旧规则，在远程模式且开启密码兜底时优先密码。密码面板期间放行已知远控来源和物理键鼠，普通合成输入仍然拦截。
 
-远程模式下，已知远控来源和可识别的虚拟 HID 也可以双击 Esc 或按撤幕快捷键发起验证，验证仍必须通过 Touch ID 或密码；普通合成输入不会触发认证。若只开启 Touch ID、没有开启密码兜底，远控端无法完成验证，幕帘上的提示会说明原因。
+远程模式下，已知远控来源和可识别的虚拟 HID 可以双击 Esc 或按撤幕快捷键发起验证。远控输入触发的撤幕受密码兜底开关限制：只有开启密码兜底才会进入系统密码面板，否则保持幕帘并提示；本机物理输入仍优先 Touch ID。普通合成输入不会触发认证。全局快捷键由 Carbon 注册、拿不到事件来源，按非输入来源处理。
 
 事件来源判定：
 
@@ -121,6 +123,8 @@ auleumctl remote status  # 查看模式、检测到的工具和 HID SPI 状态
 |---|---|---|
 | `presentationModeEnabled` | 布尔 | 默认 `true`。关闭后所有屏幕使用 gamma 幕帘。 |
 | `presentationImagePath` | 路径 | 自定义背景图。空字符串时使用默认背景或幕帘底色。 |
+| `presentationVideoPath` | 路径 | 循环播放的背景视频。设置后优先于背景图；始终静音。支持常见视频容器（`.mov` / `.mp4` / `.m4v` 等），选择时按文件类型和可播放性校验；起幕时不可读则记录 `presentation_video_unavailable` 并回退到图片或默认背景。 |
+| `presentationAmbientStyle` | `off` / `aurora` / `ember` | 内置动态光影：关闭、极光、暖焰。没有图片或视频时生效。非法值回退 `off`。 |
 | `presentationClockStyle` | `digital` / `analog` / `editorial` | 数字、表盘、日历三种时钟。非法值回退 `digital`。 |
 | `presentationLayout` | `centered` / `corner` / `minimal` / `custom` | 居中卡片、右下角、极简、自由。非法值回退 `centered`。 |
 | `presentationCustomLayout` | 对象 | 自由版式下三个组件的归一化中心点，见下文。 |
@@ -136,6 +140,8 @@ auleumctl remote status  # 查看模式、检测到的工具和 HID SPI 状态
 | `presentationDim` | 0–0.8 | 背景图额外暗化。 |
 
 没有自定义图片且 `presentationDefaultBackdrop` 为 `true` 时，画布会绘制内置深色渐变；关闭后使用 `veilColor` 的纯色。展示模式关闭时，主/副屏角色都会被强制为 `black`。
+
+背景按优先级选择：场景背景图（场景提供时）→ `presentationVideoPath` → `presentationImagePath` → `presentationAmbientStyle` → 内置深色渐变（`presentationDefaultBackdrop`）→ `veilColor` 纯色。视频每块屏一个播放器、静音循环；起幕验证期间暂停，验证结束恢复。视频文件读取失败或校验不通过时，起幕会记录 `presentation_video_unavailable` 并回退到下一层背景，不会撤幕。场景设置了独立背景图时优先于全局视频。
 
 纯色幕布不会再叠加图片用的明暗渐变。文字和铜色强调会按 `veilColor` 的相对亮度自动选择深色或浅色，`presentationComponentBackground` 控制是否保留时钟底板：
 

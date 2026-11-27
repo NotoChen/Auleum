@@ -11,7 +11,7 @@ let guarder = InputGuard()
 guarder.holdToAuthSeconds = 0.6
 
 var fired = 0
-guarder.onHoldEscape = {
+guarder.onHoldEscape = { _ in
     fired += 1
     print("HOLD_FIRED count=\(fired)")
     fflush(stdout)

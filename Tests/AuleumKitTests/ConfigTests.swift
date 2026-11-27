@@ -604,6 +604,50 @@ struct ConfigTests {
         ) == PresentationChrome(ink: .light, panelTone: nil))
     }
 
+    @Test("Video and ambient backgrounds default off and round-trip")
+    func videoAndAmbientBackgrounds() throws {
+        let defaults = AuleumConfig.default
+        #expect(defaults.presentationVideoPath.isEmpty)
+        #expect(defaults.presentationAmbientStyle ==
+            PresentationAmbientStyle.off.rawValue)
+
+        var config = defaults
+        config.presentationVideoPath = "/tmp/clip.mp4"
+        config.presentationAmbientStyle = PresentationAmbientStyle.aurora.rawValue
+        let decoded = try JSONDecoder().decode(
+            AuleumConfig.self,
+            from: JSONEncoder().encode(config)
+        )
+        #expect(decoded.presentationVideoPath == "/tmp/clip.mp4")
+        #expect(decoded.presentationAmbientStyle == "aurora")
+
+        let malformed = try JSONDecoder().decode(
+            AuleumConfig.self,
+            from: Data(#"{"presentationAmbientStyle":"sparkles"}"#.utf8)
+        )
+        #expect(malformed.presentationAmbientStyle ==
+            PresentationAmbientStyle.off.rawValue)
+        #expect(PresentationAmbientStyle.storedValue("EMBER") == .ember)
+    }
+
+    @Test("Video validation rejects missing files and unknown extensions")
+    func videoValidation() throws {
+        #expect(!PresentationVideoLoader.isLoadable(path: ""))
+        #expect(!PresentationVideoLoader.isLoadable(
+            path: "/definitely/missing/clip.mp4"
+        ))
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let text = directory.appendingPathComponent("notes.txt")
+        try Data("not a video".utf8).write(to: text)
+        #expect(!PresentationVideoLoader.isLoadable(path: text.path))
+    }
+
     @Test("Update settings default on and decode independently")
     func updateSettings() throws {
         let defaults = AuleumConfig.default

@@ -216,9 +216,9 @@ public final class InputGuard {
     /// 幕帘期间的撤幕快捷键，必须和 GlobalHotkey 使用同一个绑定。
     public var exitHotkeyKeyCode: Int64 = HotkeyPolicy.keyCode
     public var exitHotkeyModifiers: CGEventFlags = HotkeyPolicy.modifiers
-    public var onHoldEscape: (() -> Void)?
+    public var onHoldEscape: ((InputOrigin) -> Void)?
     /// 幕帘期间再次按起幕快捷键时调用。
-    public var onExitHotkey: (() -> Void)?
+    public var onExitHotkey: ((InputOrigin) -> Void)?
     /// Touch ID 面板显示期间再次按物理 Esc 时取消认证。
     public var onCancelAuthentication: (() -> Void)?
     /// tap 被系统禁用且无法恢复时调用。调用方应尽快撤幕。
@@ -583,7 +583,7 @@ public final class InputGuard {
                 if hotkeyMatches {
                     if type == .keyDown, !isRepeat {
                         DispatchQueue.main.async { [weak self] in
-                            self?.onExitHotkey?()
+                            self?.onExitHotkey?(origin)
                         }
                     }
                     return nil
@@ -595,7 +595,7 @@ public final class InputGuard {
                     escDown = false
                     cancelHold()
                     DispatchQueue.main.async { [weak self] in
-                        self?.onHoldEscape?()
+                        self?.onHoldEscape?(origin)
                     }
                     return nil
                 }
@@ -726,7 +726,7 @@ public final class InputGuard {
         cancelHold()
         let item = DispatchWorkItem { [weak self] in
             guard let self, self.isEnabled, self.escDown else { return }
-            self.onHoldEscape?()
+            self.onHoldEscape?(.physical)
         }
         holdWorkItem = item
         DispatchQueue.main.asyncAfter(deadline: .now() + holdToAuthSeconds, execute: item)

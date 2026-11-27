@@ -170,6 +170,8 @@ extension SettingsWindowController {
             "default_protection_minutes: \(Int(protectionMinutesField.value.rounded()))",
             "presentation_mode: \(presentationSwitch.state == .on)",
             "presentation_image: \(presentationImagePath)",
+            "presentation_video: \(presentationVideoPath)",
+            "presentation_ambient: \(presentationAmbientStyle.rawValue)",
             "presentation_clock: \(selectedClockStyle.rawValue)",
             "presentation_main_role: \(selectedRole(mainRolePopup).rawValue)",
             "presentation_secondary_role: \(selectedRole(secondaryRolePopup).rawValue)",

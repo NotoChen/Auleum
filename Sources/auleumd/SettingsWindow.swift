@@ -21,6 +21,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     var hasAccessibility = Permissions.hasAccessibility()
     var hasScreenRecording = Permissions.hasScreenRecording()
     var presentationImagePath = ""
+    var presentationVideoPath = ""
+    var presentationAmbientStyle: PresentationAmbientStyle = .off
     var draftCustomLayout = PresentationCustomLayout.default
     var presentationPreviewHeight: NSLayoutConstraint?
     var scenePreviewHeight: NSLayoutConstraint?
@@ -154,10 +156,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     var weekdayButtons: [NSButton] = []
     let presentationSwitch = NSSwitch()
     let presentationImageLabel = NSTextField(labelWithString: "纯色背景")
+    let presentationVideoLabel = NSTextField(labelWithString: "未选择")
     let presentationPreview = AuleumPresentationPreviewView()
     let clockStylePicker = ClockStylePickerView()
     let presentationLayoutControl = NSSegmentedControl()
     let presentationComponentControl = NSSegmentedControl()
+    let presentationAmbientControl = NSSegmentedControl()
     let defaultBackdropSwitch = NSSwitch()
     let presentationSecondsSwitch = NSSwitch()
     let presentationLunarSwitch = NSSwitch()
@@ -210,6 +214,18 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         action: nil
     )
     let presentationClearButton = AuleumButton(
+        title: "清除",
+        style: .secondary,
+        target: nil,
+        action: nil
+    )
+    let presentationVideoButton = AuleumButton(
+        title: "选择视频…",
+        style: .secondary,
+        target: nil,
+        action: nil
+    )
+    let presentationVideoClearButton = AuleumButton(
         title: "清除",
         style: .secondary,
         target: nil,
@@ -297,6 +313,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         }
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        presentationPreview.setVideoPlayback(
+            active: selectedPage == .presentation
+        )
+        scenePreview.setVideoPlayback(active: selectedPage == .scenes)
     }
 
     func hide() {
@@ -592,6 +612,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         ])
         scrollView.contentView.scroll(to: .zero)
         scrollView.reflectScrolledClipView(scrollView.contentView)
+        presentationPreview.setVideoPlayback(active: page == .presentation)
+        scenePreview.setVideoPlayback(active: page == .scenes)
     }
 
     static var version: String {

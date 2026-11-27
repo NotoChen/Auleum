@@ -299,6 +299,8 @@ extension AppDelegate {
 
     func handleHotkey() {
         if state == .active {
+            // Carbon 热键拿不到事件来源，无法区分本机与远控；按非输入来源
+            // 处理，沿用“远控模式 + 密码兜底时优先密码”的规则。
             requestExit(trigger: .hotkey)
             return
         }

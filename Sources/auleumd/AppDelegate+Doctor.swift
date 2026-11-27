@@ -127,7 +127,10 @@ extension AppDelegate {
             + " · 虚拟 HID 识别 \(remoteSPIText)"
         lines.append(remoteToolsLine)
         if settings.remoteMode, !config.allowPasswordFallback {
-            lines.append("提示：远程兼容已开启但密码兜底关闭，远控端无法完成 Touch ID 验证。")
+            lines.append(
+                "提示：远程兼容已开启但密码兜底关闭；远控输入无法完成 Touch ID，"
+                    + "由远控输入触发的撤幕会保持幕帘并提示。"
+            )
         }
         let inputCounters = settings.inputCounters
         let inputLine = "输入计数：物理拦截 \(inputCounters.physicalBlocked)"

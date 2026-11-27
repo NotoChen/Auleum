@@ -52,6 +52,10 @@ extension SettingsWindowController {
         zoomField.value = config.presentationZoom
         dimField.value = config.presentationDim
         presentationImagePath = config.presentationImagePath
+        presentationVideoPath = config.presentationVideoPath
+        presentationAmbientStyle = PresentationAmbientStyle.storedValue(
+            config.presentationAmbientStyle
+        )
         let layout = PresentationLayout.storedValue(config.presentationLayout)
         presentationLayoutControl.selectedSegment =
             PresentationLayout.allCases.firstIndex(of: layout) ?? 0
@@ -76,6 +80,9 @@ extension SettingsWindowController {
         presentationImageLabel.stringValue = presentationImagePath.isEmpty
             ? "纯色背景"
             : URL(fileURLWithPath: presentationImagePath).lastPathComponent
+        presentationVideoLabel.stringValue = presentationVideoPath.isEmpty
+            ? "未选择"
+            : URL(fileURLWithPath: presentationVideoPath).lastPathComponent
         loadSceneProfiles()
         hotkeyButton.binding = HotkeyBinding(
             keyCode: config.hotkeyKeyCode,
@@ -243,6 +250,8 @@ extension SettingsWindowController {
         updated.sceneHotkeys = customSceneHotkeys
         updated.presentationModeEnabled = presentationSwitch.state == .on
         updated.presentationImagePath = presentationImagePath
+        updated.presentationVideoPath = presentationVideoPath
+        updated.presentationAmbientStyle = presentationAmbientStyle.rawValue
         updated.presentationClockStyle = selectedClockStyle.rawValue
         updated.presentationLayout = selectedPresentationLayout.rawValue
         updated.presentationCustomLayout = draftCustomLayout.sanitized()
@@ -276,14 +285,25 @@ extension SettingsWindowController {
         }
         window?.makeFirstResponder(nil)
         let imagePath = presentationImagePath
-        if presentationSwitch.state == .on,
-           !imagePath.isEmpty,
-           !PresentationBackgroundLoader.isLoadable(path: imagePath) {
-            presentAlert(
-                title: "背景图无法读取",
-                message: "请选择有效的图片文件，或清除路径改用纯色背景。"
-            )
-            return false
+        let videoPath = presentationVideoPath
+        if presentationSwitch.state == .on {
+            if !videoPath.isEmpty,
+               !PresentationVideoLoader.isLoadable(path: videoPath) {
+                presentAlert(
+                    title: "背景视频无法读取",
+                    message: "请选择有效的视频文件，或清除路径改用图片或默认背景。"
+                )
+                return false
+            }
+            if videoPath.isEmpty,
+               !imagePath.isEmpty,
+               !PresentationBackgroundLoader.isLoadable(path: imagePath) {
+                presentAlert(
+                    title: "背景图无法读取",
+                    message: "请选择有效的图片文件，或清除路径改用纯色背景。"
+                )
+                return false
+            }
         }
         if !hotkeyButton.binding.isValid {
             presentAlert(
@@ -380,6 +400,8 @@ extension SettingsWindowController {
         stopPermissionPolling()
         stopDirtyTracking()
         stopKeyboardMonitor()
+        presentationPreview.setVideoPlayback(active: false)
+        scenePreview.setVideoPlayback(active: false)
         window?.orderOut(nil)
     }
 

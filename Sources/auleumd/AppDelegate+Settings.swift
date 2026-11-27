@@ -75,8 +75,30 @@ extension AppDelegate {
                 self.sentinel.preventsClamshellSleep = updated.clamshellModeEnabled
                 self.resetAutomationState()
                 if updated.presentationModeEnabled {
+                    // 场景自带背景图时保持场景背景，不要被设置里的全局
+                    // 图片/视频即时覆盖；下次起幕仍按场景配置优先。
+                    let sceneBackground =
+                        self.sessionSceneProfile?.backgroundImagePath ?? ""
+                    let sceneOverridesBackground = self.state.isOn
+                        && !sceneBackground.isEmpty
                     self.presentation?.setColor(AuleumColor(hex: updated.veilColor) ?? .black)
-                    self.presentation?.setImagePath(updated.presentationImagePath.isEmpty ? nil : updated.presentationImagePath)
+                    self.presentation?.setImagePath(
+                        sceneOverridesBackground
+                            ? sceneBackground
+                            : (updated.presentationImagePath.isEmpty
+                                ? nil
+                                : updated.presentationImagePath)
+                    )
+                    self.presentation?.setVideoPath(
+                        sceneOverridesBackground || updated.presentationVideoPath.isEmpty
+                            ? nil
+                            : updated.presentationVideoPath
+                    )
+                    self.presentation?.setAmbientStyle(
+                        PresentationAmbientStyle.storedValue(
+                            updated.presentationAmbientStyle
+                        )
+                    )
                     self.presentation?.setImagePresentation(
                         focus: CGPoint(
                             x: updated.presentationFocusX,
@@ -125,6 +147,8 @@ extension AppDelegate {
                     "color": updated.veilColor,
                     "presentation_mode": updated.presentationModeEnabled,
                     "presentation_image": updated.presentationImagePath,
+                    "presentation_video": updated.presentationVideoPath,
+                    "presentation_ambient": updated.presentationAmbientStyle,
                     "presentation_clock": updated.presentationClockStyle,
                     "presentation_layout": updated.presentationLayout,
                     "presentation_default_backdrop":

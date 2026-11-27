@@ -1,3 +1,4 @@
+import AppKit
 import AuleumKit
 import Foundation
 
@@ -50,6 +51,23 @@ extension AppDelegate {
             "source": remoteModeSource,
             "tools": remoteToolsSummary,
         ])
+        if effectiveRemoteMode {
+            relinquishFocusForRemoteMode()
+        }
+    }
+
+    /// 远控模式下把键盘焦点还给下层应用。幕帘窗口不接收键盘，如果 Auleum
+    /// 仍是活动应用（例如刚从状态面板起幕），远控端的按键会全部落在 Auleum
+    /// 上，看起来像键盘失灵。异步执行，等面板收起、窗口层级稳定后再让出。
+    func relinquishFocusForRemoteMode() {
+        // 认证期间不要抢走系统验证面板的焦点。
+        guard effectiveRemoteMode, state == .active else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self,
+                  self.effectiveRemoteMode,
+                  self.state == .active else { return }
+            NSApp.deactivate()
+        }
     }
 
     func toggleRemoteModeOverride() {

@@ -172,6 +172,9 @@ extension AppDelegate {
             }
             return .failure("事件拦截启动失败：请在「系统设置 → 隐私与安全性 → 辅助功能」里勾选 Auleum，然后重新开启幕帘")
         }
+        // 先启用拦截，再铺遮挡层：铺层期间物理输入也不能漏过去。
+        // 如果铺层失败，rollback 会立即停掉 tap。
+        inputGuard.setEnabled(true)
 
         var presentationStarted = false
         var shieldStarted = false
@@ -180,19 +183,40 @@ extension AppDelegate {
             let effectiveImagePath = sceneImagePath.isEmpty
                 ? config.presentationImagePath
                 : sceneImagePath
+            let videoCandidate = sceneImagePath.isEmpty
+                ? config.presentationVideoPath
+                : ""
+            let effectiveVideoPath: String?
+            if videoCandidate.isEmpty {
+                effectiveVideoPath = nil
+            } else if PresentationVideoLoader.isLoadable(path: videoCandidate) {
+                effectiveVideoPath = videoCandidate
+            } else {
+                // 视频被删除或格式不再可读时不要让起幕失败，退回图片或内置背景。
+                effectiveVideoPath = nil
+                audit.write("presentation_video_unavailable", [
+                    "path": videoCandidate,
+                ])
+            }
             let sceneClockStyle = profile?.clockStyle ?? ""
             let effectiveClockStyle = sceneClockStyle.isEmpty
                 ? config.presentationClockStyle
                 : sceneClockStyle
-            if !effectiveImagePath.isEmpty,
+            if effectiveVideoPath == nil,
+               !effectiveImagePath.isEmpty,
                !PresentationBackgroundLoader.isLoadable(
                     path: effectiveImagePath
                ) {
                 return rollback("展示模式背景图无法读取：\(effectiveImagePath)")
             }
+            let ambientStyle = PresentationAmbientStyle.storedValue(
+                config.presentationAmbientStyle
+            )
             presentation.hidesCursor = config.hideCursorDuringVeil
             presentation.remoteMode = effectiveRemoteMode
-            presentation.blocksPointerEvents = true
+            // 真实幕帘的展示窗口不接住指针事件：物理点击由 HID tap 拦截，
+            // 远控和 Agent 的合成点击则必须真正落到下层应用。
+            presentation.blocksPointerEvents = false
             guard presentation.show(
                 screens: presentationScreens,
                 color: AuleumColor(hex: config.veilColor) ?? .black,
@@ -219,6 +243,8 @@ extension AppDelegate {
                     showsLunar: config.presentationShowLunar,
                     showsElapsed: config.presentationShowElapsed
                 ),
+                videoPath: effectiveVideoPath,
+                ambientStyle: ambientStyle,
                 status: presentationStatus()
             ) else {
                 return rollback("展示模式窗口创建失败，幕帘未开启")
@@ -228,6 +254,8 @@ extension AppDelegate {
                 "screens": presentationScreens.count,
                 "display_ids": presentationScreens.map { "\($0.displayID)" }.joined(separator: ","),
                 "image": effectiveImagePath.isEmpty ? "none" : effectiveImagePath,
+                "video": effectiveVideoPath ?? "none",
+                "ambient": ambientStyle.rawValue,
                 "layout": config.presentationLayout,
                 "default_backdrop": config.presentationDefaultBackdrop,
                 "component_background": config.presentationComponentBackground,
@@ -250,10 +278,12 @@ extension AppDelegate {
             NSLog("veil.turnOn shield raised")
         }
 
-        inputGuard.setEnabled(true)
         sentinel.preventsClamshellSleep = config.clamshellModeEnabled
         sentinel.enable()
         state = .active
+        // 从状态面板起幕时 Auleum 仍是活动应用；远控模式下让出焦点，
+        // 否则远控端的键盘输入没有可接收的下层应用。
+        relinquishFocusForRemoteMode()
         healthWatchdog?.start()
         if presentationStarted {
             startPresentationTimer()
@@ -379,41 +409,75 @@ extension AppDelegate {
         audit.flush()
     }
 
+    /// 没有可用验证方式时保持幕帘，并给出可操作的提示。
+    private func keepVeilWithoutAuthentication(trigger: ExitTrigger,
+                                               remoteRequest: Bool = false) {
+        audit.write("biometrics_unavailable", [
+            "action": "veil_kept",
+            "trigger": trigger.rawValue,
+            "password_fallback": config.allowPasswordFallback ? "enabled" : "disabled",
+            "remote_input": remoteRequest,
+        ])
+        guard presentation?.isActive == true else { return }
+        let hint: String
+        if remoteRequest, !config.allowPasswordFallback {
+            hint = "远控输入需要密码验证；请开启密码兜底、在本机用 Touch ID，或用 auleumctl panic 应急撤幕"
+        } else if config.allowPasswordFallback {
+            hint = "系统密码验证不可用；修复后重试，或使用 auleumctl panic 应急撤幕"
+        } else {
+            hint = "Touch ID 不可用；可在设置中开启密码验证，或使用 auleumctl panic 应急撤幕"
+        }
+        presentation.showReturnHint(hint)
+    }
+
     /// 双击/长按 Esc、再次按起幕快捷键或 auleumctl off：
     /// 默认在幕帘内显示自定义 Touch ID 卡片；Touch ID 不可用时直接用
     /// 系统密码面板。开启密码兜底后，指纹失败或锁定也会转入密码面板。
-    func requestExit(trigger: ExitTrigger) {
+    /// 撤幕方式按输入来源选择：本机物理输入优先 Touch ID；远控输入不能
+    /// 完成 Touch ID，只有密码兜底开启时才走系统密码，否则保持幕帘。
+    func requestExit(trigger: ExitTrigger,
+                     inputOrigin: InputOrigin? = nil) {
         guard state == .active else { return }
 
+        let remoteRequest = effectiveRemoteMode
+            && (inputOrigin == .remoteProcess
+                || inputOrigin == .virtualDevice)
+        let biometricsContext = auth.makeContext()
+        let systemContext = auth.makeSystemContext()
+        let preferred = ExitAuthPolicy.preferredMethod(
+            remoteRequest: remoteRequest,
+            physicalRequest: inputOrigin == .physical,
+            remoteMode: effectiveRemoteMode,
+            passwordFallbackEnabled: config.allowPasswordFallback,
+            biometricsAvailable: biometricsContext != nil,
+            systemAuthAvailable: systemContext != nil
+        )
         let method: AuthMethod
         let context: LAContext
-        // 远程控制下优先走密码：Touch ID 需要本地手指，远控端无法完成。
-        // 只有在用户显式开启密码兜底时才这样做，避免改变默认出口。
-        if effectiveRemoteMode,
-           config.allowPasswordFallback,
-           let systemContext = auth.makeSystemContext() {
-            method = .password
-            context = systemContext
-        } else if let biometricsContext = auth.makeContext() {
-            method = .touchID
-            context = biometricsContext
-        } else if config.allowPasswordFallback,
-                  let systemContext = auth.makeSystemContext() {
-            method = .password
-            context = systemContext
+        if let preferred {
+            let selected: LAContext?
+            switch preferred {
+            case .password:
+                selected = systemContext
+            case .touchID:
+                selected = biometricsContext
+            }
+            guard let selected else {
+                // 策略选中的方式在生成上下文时不可用：保持幕帘。
+                keepVeilWithoutAuthentication(
+                    trigger: trigger,
+                    remoteRequest: remoteRequest
+                )
+                return
+            }
+            method = preferred == .password ? .password : .touchID
+            context = selected
         } else {
             // 普通出口没有可用验证方式时保持幕帘，应急路径仍可用 panic。
-            audit.write("biometrics_unavailable", [
-                "action": "veil_kept",
-                "trigger": trigger.rawValue,
-                "password_fallback": config.allowPasswordFallback ? "enabled" : "disabled",
-            ])
-            if presentation?.isActive == true {
-                let hint = config.allowPasswordFallback
-                    ? "系统密码验证不可用；修复后重试，或使用 auleumctl panic 应急撤幕"
-                    : "Touch ID 不可用；可在设置中开启密码验证，或使用 auleumctl panic 应急撤幕"
-                presentation.showReturnHint(hint)
-            }
+            keepVeilWithoutAuthentication(
+                trigger: trigger,
+                remoteRequest: remoteRequest
+            )
             return
         }
 
@@ -426,7 +490,7 @@ extension AppDelegate {
             presentation.hideForAuth()
             let authHint: String
             if method == .touchID {
-                authHint = effectiveRemoteMode && !config.allowPasswordFallback
+                authHint = remoteRequest && !config.allowPasswordFallback
                     ? "远控模式下 Touch ID 无法完成；开启密码验证后可在远控端撤幕"
                     : "等待 Touch ID 验证…"
             } else {
@@ -471,6 +535,8 @@ extension AppDelegate {
             "trigger": trigger.rawValue,
             "method": method.rawValue,
             "remote_mode": effectiveRemoteMode,
+            "remote_input": remoteRequest,
+            "physical_input": inputOrigin == .physical,
         ])
 
         let completion: (Bool, Error?) -> Void = { [weak self] ok, error in
@@ -544,6 +610,8 @@ extension AppDelegate {
         ])
         updateStatusItem()
         refreshVeilHealth()
+        // 认证面板关闭后把焦点还给前台应用，避免远控键盘继续落在 Auleum。
+        relinquishFocusForRemoteMode()
     }
 
     /// 指纹失败、锁定、硬件错误和用户主动选择「使用密码」都回退；
@@ -628,6 +696,7 @@ extension AppDelegate {
         audit.write("auth_cancelled", ["method": method.rawValue])
         updateStatusItem()
         refreshVeilHealth()
+        relinquishFocusForRemoteMode()
     }
 
     func configureProtection(minutes: Int, auditReason: String) {

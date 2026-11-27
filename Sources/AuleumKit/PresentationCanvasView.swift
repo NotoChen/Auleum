@@ -4,6 +4,8 @@ import AppKit
 /// 避免预览与实际幕帘各维护一份时钟样式。
 public final class PresentationCanvasView: NSView {
     private let background = AspectFillImageView()
+    private let ambientBackdrop = PresentationAmbientBackdropView()
+    private let videoBackground = PresentationVideoBackgroundView()
     private let defaultBackdrop = PresentationDefaultBackdropView()
     private let shade = PresentationShadeView()
     private let card = NSView()
@@ -16,6 +18,7 @@ public final class PresentationCanvasView: NSView {
     private var layoutStyle: PresentationLayout
     private var customLayout: PresentationCustomLayout
     private var usesDefaultBackdrop: Bool
+    private var ambientStyle: PresentationAmbientStyle
     private var componentBackground: PresentationComponentBackground
     private var hintWorkItem: DispatchWorkItem?
     private var hintAnimationToken = 0
@@ -79,12 +82,15 @@ public final class PresentationCanvasView: NSView {
                 customLayout: PresentationCustomLayout = .default,
                 usesDefaultBackdrop: Bool = true,
                 componentBackground: PresentationComponentBackground = .auto,
-                widgets: PresentationClockWidgets = PresentationClockWidgets()) {
+                widgets: PresentationClockWidgets = PresentationClockWidgets(),
+                videoPath: String? = nil,
+                ambientStyle: PresentationAmbientStyle = .off) {
         self.backgroundColor = color
         self.compact = compact
         self.layoutStyle = layout
         self.customLayout = customLayout.sanitized()
         self.usesDefaultBackdrop = usesDefaultBackdrop
+        self.ambientStyle = ambientStyle
         self.componentBackground = componentBackground
         self.clockView = PresentationClockView(
             style: clockStyle,
@@ -98,6 +104,20 @@ public final class PresentationCanvasView: NSView {
         background.autoresizingMask = [.width, .height]
         background.apply(image: image, focus: focus, zoom: zoom)
         addSubview(background)
+
+        ambientBackdrop.style = ambientStyle
+        ambientBackdrop.autoresizingMask = [.width, .height]
+        ambientBackdrop.isHidden = true
+        addSubview(ambientBackdrop)
+
+        videoBackground.autoresizingMask = [.width, .height]
+        videoBackground.onUnavailable = { [weak self] in
+            self?.handleVideoUnavailable()
+        }
+        addSubview(videoBackground)
+        if let videoPath {
+            videoBackground.setVideo(path: videoPath)
+        }
 
         defaultBackdrop.autoresizingMask = [.width, .height]
         addSubview(defaultBackdrop)
@@ -261,6 +281,8 @@ public final class PresentationCanvasView: NSView {
     public override func layout() {
         super.layout()
         background.frame = bounds
+        ambientBackdrop.frame = bounds
+        videoBackground.frame = bounds
         defaultBackdrop.frame = bounds
         shade.frame = bounds
     }
@@ -311,6 +333,35 @@ public final class PresentationCanvasView: NSView {
         background.apply(image: image, focus: focus, zoom: zoom)
         shade.dimOpacity = dim
         shade.needsDisplay = true
+        applyBackdropVisibility()
+        applyChrome()
+    }
+
+    /// 视频优先于图片；路径为空时清除播放器并回落到图片或默认背景。
+    public func setVideoPath(_ path: String?) {
+        videoBackground.setVideo(path: path)
+        applyBackdropVisibility()
+        applyChrome()
+    }
+
+    public func setAmbientStyle(_ style: PresentationAmbientStyle) {
+        guard ambientStyle != style else { return }
+        ambientStyle = style
+        ambientBackdrop.style = style
+        applyBackdropVisibility()
+        applyChrome()
+    }
+
+    public func setVideoPlayback(active: Bool) {
+        videoBackground.setPlayback(active: active)
+    }
+
+    public func stopVideo() {
+        videoBackground.clear()
+    }
+
+    private func handleVideoUnavailable() {
+        videoBackground.clear()
         applyBackdropVisibility()
         applyChrome()
     }
@@ -398,13 +449,27 @@ public final class PresentationCanvasView: NSView {
         }
     }
 
+    private var hasVideo: Bool {
+        videoBackground.videoPath != nil
+    }
+
+    private var hasAmbientBackdrop: Bool {
+        ambientStyle != .off && background.image == nil && !hasVideo
+    }
+
     private func applyBackdropVisibility() {
         let hasImage = background.image != nil
-        background.isHidden = !hasImage
-        defaultBackdrop.isHidden = hasImage || !usesDefaultBackdrop
+        let hasVideo = self.hasVideo
+        let hasAmbient = hasAmbientBackdrop
+        background.isHidden = !hasImage || hasVideo
+        videoBackground.isHidden = !hasVideo
+        ambientBackdrop.isHidden = !hasAmbient
+        defaultBackdrop.isHidden = hasImage || hasVideo || hasAmbient
+            || !usesDefaultBackdrop
         defaultBackdrop.needsDisplay = true
         // 纯色幕布不需要为图片准备的上暗下亮渐变，否则幕布颜色会被改写。
-        shade.isHidden = !(hasImage || usesDefaultBackdrop)
+        shade.isHidden = !(hasImage || hasVideo || hasAmbient
+            || usesDefaultBackdrop)
     }
 
     private func applyLayout() {
@@ -537,7 +602,7 @@ public final class PresentationCanvasView: NSView {
     /// 图片和内置渐变上保持浅色文字，必要时保留玻璃底板。
     private func applyChrome() {
         let chrome = PresentationChromeResolver.resolve(
-            hasImage: background.image != nil,
+            hasImage: background.image != nil || hasVideo || hasAmbientBackdrop,
             usesDefaultBackdrop: usesDefaultBackdrop,
             color: backgroundColor,
             componentBackground: componentBackground,

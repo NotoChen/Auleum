@@ -43,4 +43,26 @@ struct PresentationPreviewTests {
         #expect(error == .imageUnreadable)
         #expect(!session.isActive)
     }
+
+    @Test("Remote mode lets pointer events reach apps behind presentation windows")
+    func remotePointerPassthrough() {
+        #expect(
+            PresentationOverlay.windowIgnoresMouseEvents(
+                blocksPointerEvents: true,
+                remoteMode: true
+            )
+        )
+        #expect(
+            !PresentationOverlay.windowIgnoresMouseEvents(
+                blocksPointerEvents: true,
+                remoteMode: false
+            )
+        )
+        #expect(
+            PresentationOverlay.windowIgnoresMouseEvents(
+                blocksPointerEvents: false,
+                remoteMode: false
+            )
+        )
+    }
 }

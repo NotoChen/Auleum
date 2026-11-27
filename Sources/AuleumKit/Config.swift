@@ -28,6 +28,10 @@ public struct AuleumConfig: Codable, Equatable {
     public var presentationModeEnabled: Bool
     /// 展示模式自定义背景图路径；空字符串时按默认渐变或幕帘底色显示。
     public var presentationImagePath: String
+    /// 展示模式循环视频背景；非空且可播放时优先于图片。视频始终静音。
+    public var presentationVideoPath: String
+    /// 没有图片/视频时的内置动态背景：off / aurora / ember。
+    public var presentationAmbientStyle: String
     /// 展示模式时钟样式：digital / analog / editorial。
     public var presentationClockStyle: String
     /// 展示模式版式：centered / corner / minimal / custom。
@@ -92,6 +96,9 @@ public struct AuleumConfig: Codable, Equatable {
                 hasShownOnboarding: Bool = false,
                 presentationModeEnabled: Bool = true,
                 presentationImagePath: String = "",
+                presentationVideoPath: String = "",
+                presentationAmbientStyle: String =
+                    PresentationAmbientStyle.off.rawValue,
                 presentationClockStyle: String =
                     PresentationClockStyle.digital.rawValue,
                 presentationLayout: String =
@@ -137,6 +144,10 @@ public struct AuleumConfig: Codable, Equatable {
         self.hasShownOnboarding = hasShownOnboarding
         self.presentationModeEnabled = presentationModeEnabled
         self.presentationImagePath = presentationImagePath
+        self.presentationVideoPath = presentationVideoPath
+        self.presentationAmbientStyle = PresentationAmbientStyle
+            .storedValue(presentationAmbientStyle)
+            .rawValue
         self.presentationClockStyle = PresentationClockStyle
             .storedValue(presentationClockStyle)
             .rawValue
@@ -188,6 +199,7 @@ public struct AuleumConfig: Codable, Equatable {
         case sceneHotkeys
         case hasShownOnboarding
         case presentationModeEnabled, presentationImagePath, presentationClockStyle
+        case presentationVideoPath, presentationAmbientStyle
         case presentationLayout, presentationCustomLayout
         case presentationComponentBackground
         case presentationDefaultBackdrop
@@ -277,6 +289,17 @@ public struct AuleumConfig: Codable, Equatable {
             forKey: .presentationImagePath
         )) ?? ""
         presentationImagePath = path.count <= 4096 ? path : ""
+        let videoPath = (try? c.decodeIfPresent(
+            String.self,
+            forKey: .presentationVideoPath
+        )) ?? ""
+        presentationVideoPath = videoPath.count <= 4096 ? videoPath : ""
+        presentationAmbientStyle = PresentationAmbientStyle.storedValue(
+            (try? c.decodeIfPresent(
+                String.self,
+                forKey: .presentationAmbientStyle
+            )) ?? ""
+        ).rawValue
         let style = (try? c.decodeIfPresent(
             String.self,
             forKey: .presentationClockStyle

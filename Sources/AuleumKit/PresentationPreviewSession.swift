@@ -4,6 +4,8 @@ import Foundation
 public struct PresentationPreviewConfiguration: Equatable {
     public var color: AuleumColor
     public var imagePath: String?
+    public var videoPath: String?
+    public var ambientStyle: PresentationAmbientStyle
     public var clockStyle: PresentationClockStyle
     public var imageFocus: CGPoint
     public var imageZoom: CGFloat
@@ -17,6 +19,8 @@ public struct PresentationPreviewConfiguration: Equatable {
 
     public init(color: AuleumColor,
                 imagePath: String?,
+                videoPath: String? = nil,
+                ambientStyle: PresentationAmbientStyle = .off,
                 clockStyle: PresentationClockStyle,
                 imageFocus: CGPoint = CGPoint(x: 0.5, y: 0.5),
                 imageZoom: CGFloat = 1,
@@ -29,6 +33,8 @@ public struct PresentationPreviewConfiguration: Equatable {
                 duration: TimeInterval = 8) {
         self.color = color
         self.imagePath = imagePath
+        self.videoPath = videoPath
+        self.ambientStyle = ambientStyle
         self.clockStyle = clockStyle
         self.imageFocus = imageFocus
         self.imageZoom = imageZoom
@@ -46,6 +52,7 @@ public enum PresentationPreviewError: Error, Equatable {
     case alreadyActive
     case noScreens
     case imageUnreadable
+    case videoUnreadable
     case windowCreationFailed
 
     public var message: String {
@@ -56,6 +63,8 @@ public enum PresentationPreviewError: Error, Equatable {
             return "没有检测到可用的显示器"
         case .imageUnreadable:
             return "背景图无法读取"
+        case .videoUnreadable:
+            return "背景视频无法播放"
         case .windowCreationFailed:
             return "无法创建全屏试看窗口"
         }
@@ -96,10 +105,17 @@ public final class PresentationPreviewSession {
     ) -> PresentationPreviewError? {
         guard !overlay.isActive else { return .alreadyActive }
         guard !screens.isEmpty else { return .noScreens }
-        if let path = configuration.imagePath,
+        let hasVideo = !(configuration.videoPath ?? "").isEmpty
+        if !hasVideo,
+           let path = configuration.imagePath,
            !path.isEmpty,
            !PresentationBackgroundLoader.isLoadable(path: path) {
             return .imageUnreadable
+        }
+        if let path = configuration.videoPath,
+           !path.isEmpty,
+           !PresentationVideoLoader.isLoadable(path: path) {
+            return .videoUnreadable
         }
         let duration = min(30, max(3, configuration.duration))
         remaining = Int(ceil(duration))
@@ -118,6 +134,8 @@ public final class PresentationPreviewSession {
             usesDefaultBackdrop: configuration.usesDefaultBackdrop,
             componentBackground: configuration.componentBackground,
             widgets: configuration.widgets,
+            videoPath: configuration.videoPath,
+            ambientStyle: configuration.ambientStyle,
             status: status
         ) else {
             self.completion = nil

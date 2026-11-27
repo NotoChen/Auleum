@@ -116,8 +116,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         inputGuard.holdToAuthSeconds = config.holdToAuthSeconds
         inputGuard.doubleEscapeSeconds = config.doubleEscapeSeconds
         applyHotkeySettings(to: inputGuard)
-        inputGuard.onHoldEscape = { [weak self] in self?.requestExit(trigger: .escape) }
-        inputGuard.onExitHotkey = { [weak self] in self?.requestExit(trigger: .hotkey) }
+        inputGuard.onHoldEscape = { [weak self] origin in
+            self?.requestExit(trigger: .escape, inputOrigin: origin)
+        }
+        inputGuard.onExitHotkey = { [weak self] origin in
+            self?.requestExit(trigger: .hotkey, inputOrigin: origin)
+        }
         inputGuard.onCancelAuthentication = { [weak self] in self?.cancelAuthentication() }
         inputGuard.onTapUnavailable = { [weak self] in
             self?.handleHealthFailure("输入拦截 tap 已失效")

@@ -75,6 +75,15 @@ final class UIPreviewAppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         let previewEnvironment = ProcessInfo.processInfo.environment
+        if let video = previewEnvironment["AULEUM_UI_PREVIEW_VIDEO"] {
+            config.presentationModeEnabled = true
+            config.presentationVideoPath = video
+        }
+        if let ambient = previewEnvironment["AULEUM_UI_PREVIEW_AMBIENT"] {
+            config.presentationAmbientStyle = PresentationAmbientStyle
+                .storedValue(ambient)
+                .rawValue
+        }
         if let raw = previewEnvironment["AULEUM_UI_PREVIEW_LAYOUT"] {
             config.presentationLayout = raw
         }
@@ -337,6 +346,10 @@ final class UIPreviewAppDelegate: NSObject, NSApplicationDelegate {
             environment["AULEUM_UI_PREVIEW_CLOCK_STYLE"] ?? "digital"
         )
         let imagePath = environment["AULEUM_UI_PREVIEW_IMAGE"]
+        let videoPath = environment["AULEUM_UI_PREVIEW_VIDEO"]
+        let ambientStyle = PresentationAmbientStyle.storedValue(
+            environment["AULEUM_UI_PREVIEW_AMBIENT"] ?? ""
+        )
         let width = Double(environment["AULEUM_UI_PREVIEW_WIDTH"] ?? "") ?? 1440
         let height = Double(environment["AULEUM_UI_PREVIEW_HEIGHT"] ?? "") ?? 900
         let layout = PresentationLayout.storedValue(
@@ -378,7 +391,9 @@ final class UIPreviewAppDelegate: NSObject, NSApplicationDelegate {
             customLayout: customLayout,
             usesDefaultBackdrop: usesDefaultBackdrop,
             componentBackground: componentBackground,
-            widgets: widgets
+            widgets: widgets,
+            videoPath: videoPath,
+            ambientStyle: ambientStyle
         )
         if environment["AULEUM_UI_PREVIEW_RETURN_HINT"] == "1" {
             canvas.showReturnHint("双击或长按 Esc，再用 Touch ID 解锁")
@@ -410,6 +425,10 @@ final class UIPreviewAppDelegate: NSObject, NSApplicationDelegate {
             environment["AULEUM_UI_PREVIEW_CLOCK_STYLE"] ?? "digital"
         )
         let imagePath = environment["AULEUM_UI_PREVIEW_IMAGE"]
+        let videoPath = environment["AULEUM_UI_PREVIEW_VIDEO"]
+        let ambientStyle = PresentationAmbientStyle.storedValue(
+            environment["AULEUM_UI_PREVIEW_AMBIENT"] ?? ""
+        )
         let duration = Double(
             environment["AULEUM_UI_PREVIEW_DURATION"] ?? ""
         ) ?? 4
@@ -435,6 +454,8 @@ final class UIPreviewAppDelegate: NSObject, NSApplicationDelegate {
             configuration: PresentationPreviewConfiguration(
                 color: color,
                 imagePath: imagePath,
+                videoPath: videoPath,
+                ambientStyle: ambientStyle,
                 clockStyle: style,
                 layout: layout,
                 customLayout: previewCustomLayout(environment),
